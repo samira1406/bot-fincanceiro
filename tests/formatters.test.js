@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest"
 import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
-  fmtBarraMeta, fmtHistoricoLancamentos,
+  fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
+  fmtHistoricoLancamentos,
+  fmtListaMetasCategoria, fmtMetaCategoriaAtualizada,
+  fmtMetaCategoriaCriada, fmtMetaCategoriaUltrapassada,
+  fmtProgressoMetaCategoria, fmtSemMetasCategoria,
   fmtRelatorioMensal, fmtRelatorioGeral,
 } from "../src/formatters.js"
 
@@ -72,7 +76,7 @@ describe("fmtLista", () => {
     const texto = fmtLista(lista)
     expect(texto).toContain("1.")
     expect(texto).toContain("uber")
-    expect(texto).toContain("transporte")
+    expect(texto).toContain("Transporte")
     expect(texto).toContain("30,00")
   })
 })
@@ -85,8 +89,24 @@ describe("fmtCategorias", () => {
   it("formata corretamente", () => {
     const grupos = [{ categoria: "alimentacao", total: 450 }]
     const texto  = fmtCategorias(grupos)
-    expect(texto).toContain("alimentacao")
+    expect(texto).toContain("Alimentação")
     expect(texto).toContain("450,00")
+  })
+})
+
+describe("fmtCategoriaAmigavel", () => {
+  it.each([
+    ["alimentacao", "Alimentação"],
+    ["farmacia", "Farmácia"],
+    ["salario", "Salário"],
+    ["mercado", "Mercado"],
+    ["transporte", "Transporte"],
+  ])("formata %s como %s", (categoria, esperado) => {
+    expect(fmtCategoriaAmigavel(categoria)).toBe(esperado)
+  })
+
+  it("formata descrição de salário com acento", () => {
+    expect(fmtDescricaoLancamento("salario")).toBe("salário")
   })
 })
 
@@ -117,7 +137,51 @@ describe("fmtHistoricoLancamentos", () => {
 
     expect(texto).toContain("Últimos lançamentos")
     expect(texto).toContain("16/06 - Despesa - R$ 35,00 - Mercado - mercado")
-    expect(texto).toContain("16/06 - Receita - R$ 2.500,00 - Salario - salario")
+    expect(texto).toContain("16/06 - Receita - R$ 2.500,00 - Salário - salário")
+  })
+})
+
+describe("metas por categoria", () => {
+  const meta = { categoria: "mercado", valor_limite: 600 }
+
+  it("formata meta criada", () => {
+    expect(fmtMetaCategoriaCriada(meta)).toBe("Meta criada: Mercado até R$ 600,00 neste mês.")
+  })
+
+  it("formata meta atualizada", () => {
+    expect(fmtMetaCategoriaAtualizada(meta)).toBe("Atualizei sua meta de Mercado para R$ 600,00 neste mês.")
+  })
+
+  it("formata lista de metas", () => {
+    const texto = fmtListaMetasCategoria([
+      { categoria: "mercado", valor_limite: 600, gasto: 420 },
+      { categoria: "transporte", valor_limite: 300, gasto: 90 },
+    ])
+
+    expect(texto).toContain("Suas metas deste mês")
+    expect(texto).toContain("Mercado: R$ 420,00 / R$ 600,00")
+    expect(texto).toContain("Transporte: R$ 90,00 / R$ 300,00")
+  })
+
+  it("formata meta vazia", () => {
+    expect(fmtSemMetasCategoria()).toContain("Você ainda não criou metas")
+    expect(fmtListaMetasCategoria([])).toContain("meta mercado 600")
+  })
+
+  it("formata progresso dentro do limite", () => {
+    const texto = fmtProgressoMetaCategoria(meta, 420)
+
+    expect(texto).toContain("Você já usou R$ 420,00")
+    expect(texto).toContain("Ainda restam R$ 180,00")
+  })
+
+  it("formata meta ultrapassada", () => {
+    const texto = fmtMetaCategoriaUltrapassada(meta, 640)
+
+    expect(texto).toContain("ultrapassou sua meta de Mercado")
+    expect(texto).toContain("Meta: R$ 600,00")
+    expect(texto).toContain("Gasto atual: R$ 640,00")
+    expect(texto).toContain("Excedente: R$ 40,00")
   })
 })
 

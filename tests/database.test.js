@@ -29,11 +29,14 @@ const {
   atualizarValorLancamento, deletarLancamento, deletarLancamentoDoUsuario,
   deletarLancamentosDesde,
   getTodosUsuarios, getSomaPorTipo, definirMeta, getMeta,
+  criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
+  calcularGastoCategoriaNoPeriodo,
   getMesesComDados, gerarCSV, mesAtual, db,
 } = await import("../src/database.js")
 
 beforeEach(() => {
   db.exec(`
+    DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
     DELETE FROM usuarios;
   `)
@@ -213,6 +216,93 @@ describe("Metas", () => {
     definirMeta(UID, 3000)
     definirMeta(UID, 5000)
     expect(getMeta(UID)).toBe(5000)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Metas por categoria", () => {
+  const UID = "user-metas-categoria"
+
+  beforeEach(() => {
+    criarUsuario(UID)
+    atualizarUsuario(UID, { nome: "MetaCategoria", aguardando_nome: 0 })
+  })
+
+  it("cria meta nova", () => {
+    const { criada, meta } = criarOuAtualizarMetaCategoria(UID, "mercado", 600, 6, 2026)
+
+    expect(criada).toBe(true)
+    expect(meta.categoria).toBe("mercado")
+    expect(meta.valor_limite).toBe(600)
+  })
+
+  it("atualiza meta existente", () => {
+    criarOuAtualizarMetaCategoria(UID, "mercado", 500, 6, 2026)
+    const { criada, meta } = criarOuAtualizarMetaCategoria(UID, "mercado", 600, 6, 2026)
+
+    expect(criada).toBe(false)
+    expect(meta.valor_limite).toBe(600)
+    expect(listarMetasCategoria(UID, 6, 2026)).toHaveLength(1)
+  })
+
+  it("lista metas do usuário", () => {
+    criarOuAtualizarMetaCategoria(UID, "mercado", 600, 6, 2026)
+    criarOuAtualizarMetaCategoria(UID, "transporte", 300, 6, 2026)
+
+    const metas = listarMetasCategoria(UID, 6, 2026)
+
+    expect(metas.map(m => m.categoria)).toEqual(["mercado", "transporte"])
+  })
+
+  it("não mistura metas entre usuários", () => {
+    const outro = "outro-user"
+    criarUsuario(outro)
+    criarOuAtualizarMetaCategoria(UID, "mercado", 600, 6, 2026)
+    criarOuAtualizarMetaCategoria(outro, "mercado", 900, 6, 2026)
+
+    expect(buscarMetaCategoria(UID, "mercado", 6, 2026).valor_limite).toBe(600)
+    expect(buscarMetaCategoria(outro, "mercado", 6, 2026).valor_limite).toBe(900)
+  })
+
+  it("calcula gasto da categoria no mês", () => {
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 50, mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 70, mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "uber", categoria: "transporte", valor: 30, mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "entrada", nome: "salario", categoria: "mercado", valor: 1000, mes: "6-2026" })
+
+    expect(calcularGastoCategoriaNoPeriodo(UID, "mercado", 6, 2026)).toBe(120)
+  })
+
+  it("normaliza categoria ao calcular gasto da meta", () => {
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "mercado", categoria: "Mercado", valor: 50, mes: "6-2026" })
+
+    expect(calcularGastoCategoriaNoPeriodo(UID, "mercado", 6, 2026)).toBe(50)
+    expect(calcularGastoCategoriaNoPeriodo(UID, "Mercado", 6, 2026)).toBe(50)
+  })
+
+  it("não soma lançamentos gerais em meta Mercado", () => {
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "mercado", categoria: "geral", valor: 900, mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 50, mes: "6-2026" })
+
+    expect(calcularGastoCategoriaNoPeriodo(UID, "mercado", 6, 2026)).toBe(50)
+  })
+
+  it("busca meta por categoria", () => {
+    criarOuAtualizarMetaCategoria(UID, "mercado", 600, 6, 2026)
+
+    const meta = buscarMetaCategoria(UID, "mercado", 6, 2026)
+
+    expect(meta.valor_limite).toBe(600)
+  })
+
+  it("respeita mês e ano", () => {
+    criarOuAtualizarMetaCategoria(UID, "mercado", 600, 6, 2026)
+    criarOuAtualizarMetaCategoria(UID, "mercado", 800, 7, 2026)
+    criarOuAtualizarMetaCategoria(UID, "mercado", 1000, 6, 2027)
+
+    expect(buscarMetaCategoria(UID, "mercado", 6, 2026).valor_limite).toBe(600)
+    expect(buscarMetaCategoria(UID, "mercado", 7, 2026).valor_limite).toBe(800)
+    expect(buscarMetaCategoria(UID, "mercado", 6, 2027).valor_limite).toBe(1000)
   })
 })
 

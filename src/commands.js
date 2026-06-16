@@ -11,14 +11,22 @@ import {
   getUltimosLancamentos, getUltimoLancamento,
   atualizarValorLancamento, deletarLancamentoDoUsuario, deletarLancamentosDesde,
   getTodosUsuarios, getSomaPorTipo, definirMeta, getMeta,
+  criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
+  calcularGastoCategoriaNoPeriodo,
   gerarCSV, mesAtual,
 } from "./database.js"
 import {
   fmtValor, fmtLista, fmtRelatorioMensal, fmtRelatorioGeral,
   fmtCategorias, fmtSaldo, fmtBarraMeta, fmtHistoricoLancamentos,
-  fmtTipoLancamento, fmtCapitalizado,
+  fmtTipoLancamento, fmtCategoriaAmigavel, fmtDescricaoLancamento,
+  fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
+  fmtListaMetasCategoria, fmtProgressoMetaCategoria,
+  fmtMetaCategoriaUltrapassada,
 } from "./formatters.js"
-import { parseCorrecaoUltimo, parseLancamento, parseValorSimples } from "./validators.js"
+import {
+  parseCorrecaoUltimo, parseLancamento,
+  parseMetaCategoria, parseValorSimples,
+} from "./validators.js"
 
 // ── Envio seguro ──────────────────────────────────────────────────────────────
 
@@ -60,6 +68,7 @@ async function enviarDocumento(sock, jid, buffer, nomeArquivo, mimetype) {
 const inicioDoDia    = () => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime() }
 const inicioDaSemana = () => { const d = new Date(); const dia = d.getDay(); d.setDate(d.getDate()-(dia===0?6:dia-1)); d.setHours(0,0,0,0); return d.getTime() }
 const inicioDoMes    = () => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d.getTime() }
+const periodoAtual   = () => { const d = new Date(); return { mes: d.getMonth() + 1, ano: d.getFullYear() } }
 
 // ── Alerta de meta ────────────────────────────────────────────────────────────
 
@@ -114,6 +123,7 @@ async function handleComandos(sock, from) {
 
 *Registrar entrada:*
   salario 5000 | freela 800
+  recebi 2500 salario | entrou 500 pix
 
 *Relatórios:*
   relatorio         — detalhado do mês
@@ -126,6 +136,8 @@ async function handleComandos(sock, from) {
 *Metas:*
   meta 3000         — define meta mensal
   meta ver          — progresso da meta
+  meta mercado 600  — meta mensal por categoria
+  metas             — lista metas por categoria
 
 *Apagar:*
   apagar ultimo | excluir ultimo
@@ -254,6 +266,42 @@ Restante: R$ ${fmtValor(Math.max(meta - totalG, 0))}`)
   await enviar(sock, from, `🎯 *${nome}*, meta definida: *R$ ${fmtValor(valor)}* para este mês.`)
 }
 
+async function handleCriarMetaCategoria(sock, from, usuarioId, resultado) {
+  if (resultado.erro === "valor") {
+    await enviar(sock, from,
+      "Não consegui identificar o valor da meta.\nTente assim: meta mercado 600")
+    return
+  }
+
+  if (resultado.erro === "categoria") {
+    await enviar(sock, from,
+      "Não consegui identificar a categoria da meta.\nTente assim: meta mercado 600")
+    return
+  }
+
+  const { mes, ano } = periodoAtual()
+  const { criada, meta } = criarOuAtualizarMetaCategoria(
+    usuarioId,
+    resultado.categoria,
+    resultado.valor,
+    mes,
+    ano
+  )
+
+  await enviar(sock, from, criada
+    ? fmtMetaCategoriaCriada(meta)
+    : fmtMetaCategoriaAtualizada(meta))
+}
+
+async function handleListarMetasCategoria(sock, from, usuarioId) {
+  const { mes, ano } = periodoAtual()
+  const metas = listarMetasCategoria(usuarioId, mes, ano).map(meta => ({
+    ...meta,
+    gasto: calcularGastoCategoriaNoPeriodo(usuarioId, meta.categoria, mes, ano),
+  }))
+  await enviar(sock, from, fmtListaMetasCategoria(metas))
+}
+
 async function handleApagarUltimo(sock, from, usuarioId, nome) {
   const ultimo = getUltimoLancamento(usuarioId)
   if (!ultimo) {
@@ -266,7 +314,7 @@ async function handleApagarUltimo(sock, from, usuarioId, nome) {
     `Descrição: ${ultimo.nome}\n` +
     `Tipo: ${fmtTipoLancamento(ultimo.tipo)}\n` +
     `Valor: R$ ${fmtValor(ultimo.valor)}\n` +
-    `Categoria: ${fmtCapitalizado(ultimo.categoria)}`)
+    `Categoria: ${fmtCategoriaAmigavel(ultimo.categoria)}`)
 }
 
 async function handleCorrigirUltimo(sock, from, usuarioId, valor) {
@@ -287,7 +335,7 @@ async function handleCorrigirUltimo(sock, from, usuarioId, valor) {
     `Corrigi seu último lançamento:\n\n` +
     `Antes: R$ ${fmtValor(valorAnterior)}\n` +
     `Agora: R$ ${fmtValor(valor)}\n` +
-    `Categoria: ${fmtCapitalizado(ultimo.categoria)}`)
+    `Categoria: ${fmtCategoriaAmigavel(ultimo.categoria)}`)
 }
 
 async function handleApagarPeriodo(sock, from, usuarioId, nome, periodo) {
@@ -366,6 +414,9 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
     "últimos gastos":  () => handleHistorico(sock, from, usuarioId, nome),
     "ultimos lancamentos":    () => handleHistorico(sock, from, usuarioId, nome),
     "últimos lançamentos":    () => handleHistorico(sock, from, usuarioId, nome),
+    "metas":          () => handleListarMetasCategoria(sock, from, usuarioId),
+    "minhas metas":   () => handleListarMetasCategoria(sock, from, usuarioId),
+    "ver metas":      () => handleListarMetasCategoria(sock, from, usuarioId),
     "exportar":        () => handleExportar(sock, from, usuarioId, nome),
     "apagar ultimo":   () => handleApagarUltimo(sock, from, usuarioId, nome),
     "apagar último":   () => handleApagarUltimo(sock, from, usuarioId, nome),
@@ -389,6 +440,12 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
     return
   }
 
+  const metaCategoria = parseMetaCategoria(mensagem)
+  if (metaCategoria) {
+    await handleCriarMetaCategoria(sock, from, usuarioId, metaCategoria)
+    return
+  }
+
   // ── Comandos com prefixo ─────────────────────────────────────────────────
   if (partes[0] === "meta") {
     await handleMeta(sock, from, usuarioId, nome, partes)
@@ -400,16 +457,27 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
   if (!lancamento) return   // mensagem desconhecida — ignora silenciosamente
 
   const { nome: nomeLanc, categoria, valor } = lancamento
-  const tipo = config.palavrasEntrada.includes(nomeLanc) ? "entrada" : "gasto"
+  const tipo = lancamento.tipo ?? (config.palavrasEntrada.includes(nomeLanc) ? "entrada" : "gasto")
 
   inserirLancamento({ usuarioId, tipo, nome: nomeLanc, categoria, valor, mes: mesAtual() })
 
   if (tipo === "entrada") {
     await enviar(sock, from,
-      `💰 *${nome}*, entrada registrada:\n${nomeLanc} (${categoria}) — R$ ${fmtValor(valor)}`)
+      `💰 *${nome}*, entrada registrada:\n${fmtDescricaoLancamento(nomeLanc)} (${fmtCategoriaAmigavel(categoria)}) — R$ ${fmtValor(valor)}`)
   } else {
-    await enviar(sock, from,
-      `💸 *${nome}*, gasto registrado:\n${nomeLanc} (${categoria}) — R$ ${fmtValor(valor)}`)
+    let texto =
+      `💸 *${nome}*, despesa registrada: R$ ${fmtValor(valor)} em ${fmtCategoriaAmigavel(categoria)}.`
+
+    const { mes, ano } = periodoAtual()
+    const meta = buscarMetaCategoria(usuarioId, categoria, mes, ano)
+    if (meta) {
+      const gastoAtual = calcularGastoCategoriaNoPeriodo(usuarioId, categoria, mes, ano)
+      texto += "\n\n" + (gastoAtual > meta.valor_limite
+        ? fmtMetaCategoriaUltrapassada(meta, gastoAtual)
+        : fmtProgressoMetaCategoria(meta, gastoAtual))
+    }
+
+    await enviar(sock, from, texto)
     await verificarMeta(sock, from, usuarioId, nome, valor)
   }
 }

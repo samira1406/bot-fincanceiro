@@ -19,6 +19,7 @@ Bot profissional para controle financeiro em grupo do WhatsApp.
 | Exportação CSV pelo WhatsApp | ✅ |
 | Categorias de gasto | ✅ |
 | Metas mensais com alertas | ✅ |
+| Metas mensais por categoria | ✅ |
 | Histórico de últimos lançamentos | ✅ |
 | Correção do último lançamento | ✅ |
 | Lembrete automático (último dia do mês) | ✅ |
@@ -82,11 +83,24 @@ pm2 save && pm2 startup
 
 ### Lançamentos
 ```
-mercado 120,50                # gasto, categoria geral
+mercado 120,50                # gasto, categoria mercado
 mercado alimentacao 120,50    # gasto, categoria alimentacao
+mercado 50                    # gasto, categoria mercado
+50 mercado                    # gasto, categoria mercado
 uber transporte 30            # gasto, categoria transporte
+gastei 50 no mercado          # gasto, categoria mercado
+gastei 80 no ifood            # gasto, categoria alimentacao
 salario 5000                  # entrada
 freela 800                    # entrada
+2500 salario                  # entrada
+recebi 2500 salario           # entrada
+recebi 2500 salário           # entrada
+entrou 500 pix                # entrada
+ganhei 1200 freelance         # entrada
+caiu 2500 salario             # entrada
+caiu salario 2500             # entrada
+receita 3000                  # entrada
+entrada 3000                  # entrada
 ```
 
 ### Relatórios
@@ -104,8 +118,23 @@ exportar         # CSV por WhatsApp
 
 ### Metas
 ```
-meta 3000        # define meta de gastos
-meta ver         # progresso + barra visual
+meta 3000                         # define meta geral de gastos
+meta ver                          # progresso da meta geral
+meta mercado 600                  # meta mensal por categoria
+meta alimentacao 500              # meta mensal por categoria
+criar meta de 600 para mercado    # meta mensal por categoria
+minha meta de mercado é 600       # meta mensal por categoria
+limite mercado 600                # meta mensal por categoria
+metas                             # lista metas do mês
+minhas metas                      # lista metas do mês
+ver metas                         # lista metas do mês
+```
+
+Exemplo:
+```
+meta mercado 600
+gastei 50 no mercado
+metas
 ```
 
 ### Apagar

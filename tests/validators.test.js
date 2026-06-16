@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, vi } from "vitest"
-import { parseCorrecaoUltimo, parseLancamento, parseValorSimples } from "../src/validators.js"
+import {
+  parseCorrecaoUltimo, parseLancamento,
+  parseMetaCategoria, parseValorSimples,
+} from "../src/validators.js"
 
 // Mock config para testes
 vi.mock("../src/config.js", () => ({
@@ -13,19 +16,43 @@ describe("parseLancamento", () => {
   describe("formato simples: nome valor", () => {
     it("parseia gasto básico", () => {
       expect(parseLancamento("mercado 120,50")).toEqual({
-        nome: "mercado", categoria: "geral", valor: 120.50,
+        nome: "mercado", categoria: "mercado", valor: 120.50,
       })
     })
 
     it("parseia com valor inteiro", () => {
       expect(parseLancamento("uber 30")).toEqual({
-        nome: "uber", categoria: "geral", valor: 30,
+        nome: "uber", categoria: "transporte", valor: 30,
       })
     })
 
     it("parseia com ponto decimal", () => {
       expect(parseLancamento("netflix 39.90")).toEqual({
-        nome: "netflix", categoria: "geral", valor: 39.90,
+        nome: "netflix", categoria: "netflix", valor: 39.90,
+      })
+    })
+
+    it("parseia gasto natural com categoria", () => {
+      expect(parseLancamento("gastei 50 no mercado")).toEqual({
+        nome: "mercado", categoria: "mercado", valor: 50,
+      })
+    })
+
+    it("parseia valor antes da categoria", () => {
+      expect(parseLancamento("50 mercado")).toEqual({
+        nome: "mercado", categoria: "mercado", valor: 50,
+      })
+    })
+
+    it("parseia valor antes da categoria com maiúscula", () => {
+      expect(parseLancamento("900 Mercado")).toEqual({
+        nome: "mercado", categoria: "mercado", valor: 900,
+      })
+    })
+
+    it("converte ifood para categoria alimentacao", () => {
+      expect(parseLancamento("gastei 80 no ifood")).toEqual({
+        nome: "ifood", categoria: "alimentacao", valor: 80,
       })
     })
   })
@@ -47,7 +74,25 @@ describe("parseLancamento", () => {
   describe("entradas", () => {
     it("parseia salario", () => {
       expect(parseLancamento("salario 5000")).toEqual({
-        nome: "salario", categoria: "geral", valor: 5000,
+        tipo: "entrada", nome: "salario", categoria: "salario", valor: 5000,
+      })
+    })
+
+    it.each([
+      ["recebi 2500 salario", { nome: "salario", categoria: "salario", valor: 2500 }],
+      ["recebi 2500 salário", { nome: "salario", categoria: "salario", valor: 2500 }],
+      ["entrou 500 pix", { nome: "pix", categoria: "pix", valor: 500 }],
+      ["ganhei 1200 freelance", { nome: "freela", categoria: "freela", valor: 1200 }],
+      ["caiu 2500 salario", { nome: "salario", categoria: "salario", valor: 2500 }],
+      ["caiu salario 2500", { nome: "salario", categoria: "salario", valor: 2500 }],
+      ["salario 2500", { nome: "salario", categoria: "salario", valor: 2500 }],
+      ["2500 salario", { nome: "salario", categoria: "salario", valor: 2500 }],
+      ["receita 3000", { nome: "receita", categoria: "receita", valor: 3000 }],
+      ["entrada 3000", { nome: "entrada", categoria: "entrada", valor: 3000 }],
+    ])("parseia %s como receita", (mensagem, esperado) => {
+      expect(parseLancamento(mensagem)).toEqual({
+        tipo: "entrada",
+        ...esperado,
       })
     })
   })
@@ -135,5 +180,59 @@ describe("parseCorrecaoUltimo", () => {
 
   it("rejeita valor inválido", () => {
     expect(parseCorrecaoUltimo("corrigir ultimo para abc")).toBeNull()
+  })
+})
+
+describe("parseMetaCategoria", () => {
+  it("parseia meta mercado 600", () => {
+    expect(parseMetaCategoria("meta mercado 600")).toEqual({
+      tipo: "meta_categoria", categoria: "mercado", valor: 600,
+    })
+  })
+
+  it("parseia meta alimentação 500", () => {
+    expect(parseMetaCategoria("meta alimentação 500")).toEqual({
+      tipo: "meta_categoria", categoria: "alimentacao", valor: 500,
+    })
+  })
+
+  it("parseia criar meta de 600 para mercado", () => {
+    expect(parseMetaCategoria("criar meta de 600 para mercado")).toEqual({
+      tipo: "meta_categoria", categoria: "mercado", valor: 600,
+    })
+  })
+
+  it("parseia minha meta de mercado é 600", () => {
+    expect(parseMetaCategoria("minha meta de mercado é 600")).toEqual({
+      tipo: "meta_categoria", categoria: "mercado", valor: 600,
+    })
+  })
+
+  it("parseia limite mercado 600", () => {
+    expect(parseMetaCategoria("limite mercado 600")).toEqual({
+      tipo: "meta_categoria", categoria: "mercado", valor: 600,
+    })
+  })
+
+  it("retorna erro para valor inválido", () => {
+    expect(parseMetaCategoria("meta mercado abc")).toEqual({
+      tipo: "meta_categoria", erro: "valor",
+    })
+  })
+
+  it("retorna erro para categoria ausente", () => {
+    expect(parseMetaCategoria("criar meta de 600")).toEqual({
+      tipo: "meta_categoria", erro: "categoria",
+    })
+  })
+
+  it("retorna erro para valor ausente", () => {
+    expect(parseMetaCategoria("meta mercado")).toEqual({
+      tipo: "meta_categoria", erro: "valor", categoria: "mercado",
+    })
+  })
+
+  it("mantém meta mensal geral fora do parser de categoria", () => {
+    expect(parseMetaCategoria("meta 3000")).toBeNull()
   })
 })

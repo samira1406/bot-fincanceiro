@@ -121,10 +121,11 @@ export function getTodosUsuarios() {
  * @returns {number} ID do lançamento inserido
  */
 export function inserirLancamento({ usuarioId, tipo, nome, categoria, valor, mes }) {
+  const categoriaNorm = normalizarCategoria(categoria ?? "geral")
   const info = db.prepare(`
     INSERT INTO lancamentos (usuario_id, tipo, nome, categoria, valor, mes)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(usuarioId, tipo, nome, categoria ?? "geral", valor, mes ?? mesAtual())
+  `).run(usuarioId, tipo, nome, categoriaNorm, valor, mes ?? mesAtual())
   return info.lastInsertRowid
 }
 
@@ -314,6 +315,127 @@ export function definirMeta(usuarioId, valor) {
  */
 export function getMeta(usuarioId) {
   return getUsuario(usuarioId)?.meta_mensal ?? null
+}
+
+// ── Metas por categoria ───────────────────────────────────────────────────────
+
+function mesAnoParaMesChave(mes, ano) {
+  return `${mes}-${ano}`
+}
+
+function removerAcentos(texto) {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+}
+
+const categoriasCanonicas = {
+  mercado:      "mercado",
+  supermercado: "mercado",
+  feira:        "mercado",
+
+  alimentacao:  "alimentacao",
+  alimento:     "alimentacao",
+  comida:       "alimentacao",
+  restaurante:  "alimentacao",
+  delivery:     "alimentacao",
+  ifood:        "alimentacao",
+
+  uber:         "transporte",
+  taxi:         "transporte",
+  onibus:       "transporte",
+  transporte:   "transporte",
+  gasolina:     "transporte",
+  combustivel:  "transporte",
+
+  farmacia:     "farmacia",
+  remedio:      "farmacia",
+  internet:     "internet",
+  aluguel:      "aluguel",
+}
+
+function normalizarCategoria(categoria) {
+  const valor = String(categoria ?? "").trim().toLowerCase()
+  const chave = removerAcentos(valor)
+  return categoriasCanonicas[chave] ?? valor
+}
+
+/**
+ * Cria ou atualiza uma meta mensal por categoria.
+ * @param {string} usuarioId
+ * @param {string} categoria
+ * @param {number} valorLimite
+ * @param {number} mes
+ * @param {number} ano
+ * @returns {{ criada:boolean, meta:object }}
+ */
+export function criarOuAtualizarMetaCategoria(usuarioId, categoria, valorLimite, mes, ano) {
+  const categoriaNorm = normalizarCategoria(categoria)
+  const existente = buscarMetaCategoria(usuarioId, categoriaNorm, mes, ano)
+
+  db.prepare(`
+    INSERT INTO metas_categoria (
+      usuario_id, categoria, valor_limite, periodo_mes, periodo_ano
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(usuario_id, categoria, periodo_mes, periodo_ano)
+    DO UPDATE SET
+      valor_limite = excluded.valor_limite,
+      atualizado_em = unixepoch() * 1000
+  `).run(usuarioId, categoriaNorm, valorLimite, mes, ano)
+
+  return {
+    criada: !existente,
+    meta: buscarMetaCategoria(usuarioId, categoriaNorm, mes, ano),
+  }
+}
+
+/**
+ * Lista metas de categoria de um usuário em um mês/ano.
+ * @param {string} usuarioId
+ * @param {number} mes
+ * @param {number} ano
+ * @returns {object[]}
+ */
+export function listarMetasCategoria(usuarioId, mes, ano) {
+  return db.prepare(`
+    SELECT * FROM metas_categoria
+    WHERE usuario_id = ? AND periodo_mes = ? AND periodo_ano = ?
+    ORDER BY categoria ASC
+  `).all(usuarioId, mes, ano)
+}
+
+/**
+ * Busca uma meta de categoria de um usuário em um mês/ano.
+ * @param {string} usuarioId
+ * @param {string} categoria
+ * @param {number} mes
+ * @param {number} ano
+ * @returns {object|null}
+ */
+export function buscarMetaCategoria(usuarioId, categoria, mes, ano) {
+  return db.prepare(`
+    SELECT * FROM metas_categoria
+    WHERE usuario_id = ? AND categoria = ? AND periodo_mes = ? AND periodo_ano = ?
+  `).get(usuarioId, normalizarCategoria(categoria), mes, ano) ?? null
+}
+
+/**
+ * Calcula gastos do usuário em uma categoria durante um mês/ano.
+ * @param {string} usuarioId
+ * @param {string} categoria
+ * @param {number} mes
+ * @param {number} ano
+ * @returns {number}
+ */
+export function calcularGastoCategoriaNoPeriodo(usuarioId, categoria, mes, ano) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(valor), 0) as total
+    FROM lancamentos
+    WHERE usuario_id = ?
+      AND tipo = 'gasto'
+      AND categoria = ?
+      AND mes = ?
+  `).get(usuarioId, normalizarCategoria(categoria), mesAnoParaMesChave(mes, ano))
+  return row?.total ?? 0
 }
 
 // ── Exportação CSV ────────────────────────────────────────────────────────────

@@ -8,3 +8,4 @@ database/backups/
 logs/
 logs/*.log
 coverage/
+exports/

@@ -23,7 +23,7 @@ export function fmtValor(valor) {
 export function fmtLista(lancamentos) {
   if (!lancamentos.length) return "_Nenhum lançamento._"
   return lancamentos
-    .map((l, i) => `${i + 1}. ${l.nome} (${l.categoria}) — R$ ${fmtValor(l.valor)}`)
+    .map((l, i) => `${i + 1}. ${fmtDescricaoLancamento(l.nome)} (${fmtCategoriaAmigavel(l.categoria)}) — R$ ${fmtValor(l.valor)}`)
     .join("\n")
 }
 
@@ -35,7 +35,7 @@ export function fmtLista(lancamentos) {
 export function fmtCategorias(grupos) {
   if (!grupos.length) return "_Nenhum gasto registrado._"
   return grupos
-    .map((g, i) => `${i + 1}. ${g.categoria} — R$ ${fmtValor(g.total)}`)
+    .map((g, i) => `${i + 1}. ${fmtCategoriaAmigavel(g.categoria)} — R$ ${fmtValor(g.total)}`)
     .join("\n")
 }
 
@@ -58,6 +58,58 @@ export function fmtCapitalizado(texto) {
   return texto.charAt(0).toUpperCase() + texto.slice(1)
 }
 
+const categoriasAmigaveis = {
+  alimentacao: "Alimentação",
+  farmacia:    "Farmácia",
+  salario:     "Salário",
+  mercado:     "Mercado",
+  transporte:  "Transporte",
+  geral:       "Geral",
+  pix:         "Pix",
+  freela:      "Freela",
+  bonus:       "Bônus",
+  extra:       "Extra",
+  receita:     "Receita",
+  entrada:     "Entrada",
+  internet:    "Internet",
+  aluguel:     "Aluguel",
+  poupanca:    "Poupança",
+}
+
+const descricoesAmigaveis = {
+  salario: "salário",
+}
+
+function chaveAmigavel(texto) {
+  return String(texto ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+}
+
+/**
+ * Formata categorias internas normalizadas para exibição amigável.
+ * @param {string} categoria
+ * @returns {string}
+ */
+export function fmtCategoriaAmigavel(categoria) {
+  const chave = chaveAmigavel(categoria)
+  if (!chave) return ""
+  return categoriasAmigaveis[chave] ?? fmtCapitalizado(String(categoria).trim())
+}
+
+/**
+ * Formata a descrição curta de um lançamento sem alterar o dado salvo.
+ * @param {string} descricao
+ * @returns {string}
+ */
+export function fmtDescricaoLancamento(descricao) {
+  const chave = chaveAmigavel(descricao)
+  if (!chave) return ""
+  return descricoesAmigaveis[chave] ?? String(descricao).trim()
+}
+
 function fmtDataCurta(timestamp) {
   return new Date(timestamp).toLocaleDateString("pt-BR", {
     day: "2-digit",
@@ -77,10 +129,76 @@ export function fmtHistoricoLancamentos(lancamentos) {
 
   const linhas = lancamentos.map((l, i) =>
     `${i + 1}. ${fmtDataCurta(l.criado_em)} - ${fmtTipoLancamento(l.tipo)} - ` +
-    `R$ ${fmtValor(l.valor)} - ${fmtCapitalizado(l.categoria)} - ${l.nome}`
+    `R$ ${fmtValor(l.valor)} - ${fmtCategoriaAmigavel(l.categoria)} - ${fmtDescricaoLancamento(l.nome)}`
   )
 
   return `Últimos lançamentos:\n\n${linhas.join("\n")}`
+}
+
+/**
+ * Formata resposta de meta por categoria criada.
+ * @param {object} meta
+ * @returns {string}
+ */
+export function fmtMetaCategoriaCriada(meta) {
+  return `Meta criada: ${fmtCategoriaAmigavel(meta.categoria)} até R$ ${fmtValor(meta.valor_limite)} neste mês.`
+}
+
+/**
+ * Formata resposta de meta por categoria atualizada.
+ * @param {object} meta
+ * @returns {string}
+ */
+export function fmtMetaCategoriaAtualizada(meta) {
+  return `Atualizei sua meta de ${fmtCategoriaAmigavel(meta.categoria)} para R$ ${fmtValor(meta.valor_limite)} neste mês.`
+}
+
+/**
+ * Formata mensagem de ausência de metas por categoria.
+ * @returns {string}
+ */
+export function fmtSemMetasCategoria() {
+  return "Você ainda não criou metas.\nExemplo: meta mercado 600"
+}
+
+/**
+ * Formata lista de metas por categoria com progresso.
+ * @param {object[]} metas
+ * @returns {string}
+ */
+export function fmtListaMetasCategoria(metas) {
+  if (!metas.length) return fmtSemMetasCategoria()
+
+  const linhas = metas.map(meta =>
+    `${fmtCategoriaAmigavel(meta.categoria)}: R$ ${fmtValor(meta.gasto ?? 0)} / R$ ${fmtValor(meta.valor_limite)}`
+  )
+
+  return `Suas metas deste mês:\n\n${linhas.join("\n")}`
+}
+
+/**
+ * Formata progresso de meta por categoria dentro do limite.
+ * @param {object} meta
+ * @param {number} gastoAtual
+ * @returns {string}
+ */
+export function fmtProgressoMetaCategoria(meta, gastoAtual) {
+  const restante = Math.max(meta.valor_limite - gastoAtual, 0)
+  return `Você já usou R$ ${fmtValor(gastoAtual)} da sua meta de R$ ${fmtValor(meta.valor_limite)}.\n` +
+    `Ainda restam R$ ${fmtValor(restante)}.`
+}
+
+/**
+ * Formata alerta de meta por categoria ultrapassada.
+ * @param {object} meta
+ * @param {number} gastoAtual
+ * @returns {string}
+ */
+export function fmtMetaCategoriaUltrapassada(meta, gastoAtual) {
+  return `Atenção: você ultrapassou sua meta de ${fmtCategoriaAmigavel(meta.categoria)}.\n` +
+    `Meta: R$ ${fmtValor(meta.valor_limite)}\n` +
+    `Gasto atual: R$ ${fmtValor(gastoAtual)}\n` +
+    `Excedente: R$ ${fmtValor(gastoAtual - meta.valor_limite)}`
 }
 
 /**
