@@ -1,0 +1,187 @@
+import {
+  makeWASocket, useMultiFileAuthState, DisconnectReason,
+  fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast,
+} from "@whiskeysockets/baileys"
+import pino    from "pino"
+import qrcode  from "qrcode-terminal"
+import fs      from "fs-extra"
+
+import { config }                                            from "./config.js"
+import { logger, logMensagem }                               from "./logger.js"
+import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
+import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
+import { iniciarScheduler }                                  from "./scheduler.js"
+import { iniciarPainel }                                     from "./web/painel.js"
+import { verificarRateLimit }                                from "./rateLimiter.js"
+
+// ── Estado global ──────────────────────────────────────────────────────────────
+let tentativas   = 0
+let reconectando = false
+export const statusBot = { conectado: false, desde: null, tentativas: 0 }
+
+function calcularDelay(t) {
+  const base = Math.min(
+    config.reconexao.delayInicial * Math.pow(config.reconexao.fator, t),
+    config.reconexao.delayMaximo
+  )
+  return Math.round(base * (0.8 + Math.random() * 0.4))
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+export async function iniciarBot() {
+  if (reconectando) return
+  reconectando = true
+
+  const { state, saveCreds } = await useMultiFileAuthState(config.authPath)
+  const { version }          = await fetchLatestBaileysVersion()
+
+  logger.info({ tentativa: tentativas + 1, version: version.join(".") }, "Iniciando conexão")
+
+  const sock = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys:  makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+    },
+    logger:              pino({ level: "silent" }),
+    browser:             ["Ubuntu", "Chrome", "124.0.6367.82"],
+    keepAliveIntervalMs: 30_000,
+    syncFullHistory:     false,
+    shouldIgnoreJid:     (jid) => isJidBroadcast(jid),
+    getMessage:          async () => ({ conversation: "" }),
+  })
+
+  reconectando = false
+
+  sock.ev.on("creds.update", saveCreds)
+
+  // ── Conexão ──────────────────────────────────────────────────────────────
+  sock.ev.on("connection.update", async (update) => {
+    const { connection, qr, lastDisconnect } = update
+
+    if (qr) {
+      console.log("\n📱 Escaneie o QR Code:\n")
+      qrcode.generate(qr, { small: true })
+    }
+
+    if (connection === "open") {
+      tentativas            = 0
+      statusBot.conectado   = true
+      statusBot.desde       = new Date().toISOString()
+      statusBot.tentativas  = 0
+      logger.info("✅ Bot conectado!")
+      iniciarScheduler(sock)
+    }
+
+    if (connection === "close") {
+      statusBot.conectado = false
+      const code   = lastDisconnect?.error?.output?.statusCode
+      const motivo = lastDisconnect?.error?.message ?? "desconhecido"
+      logger.warn({ code, motivo }, "Conexão encerrada")
+
+      if (code === DisconnectReason.loggedOut) {
+        logger.warn("Sessão expirada — limpando auth para novo QR")
+        await fs.remove(config.authPath).catch(() => {})
+        await fs.ensureDir(config.authPath)
+        tentativas = 0
+        return setTimeout(iniciarBot, 3_000)
+      }
+
+      if (code === DisconnectReason.badSession) {
+        logger.error("Sessão inválida. Remova /auth e reescaneie o QR.")
+        return process.exit(1)
+      }
+
+      if (tentativas >= config.reconexao.maxTentativas) {
+        logger.error("Máximo de tentativas atingido. Encerrando.")
+        return process.exit(1)
+      }
+
+      const delay = calcularDelay(tentativas)
+      tentativas++
+      statusBot.tentativas = tentativas
+      logger.info({ tentativa: tentativas, delay: `${(delay/1000).toFixed(1)}s` }, "Reconectando...")
+      setTimeout(iniciarBot, delay)
+    }
+  })
+
+  // ── Mensagens ─────────────────────────────────────────────────────────────
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify") return
+
+    const msg = messages?.[0]
+    if (!msg?.message)  return
+    if (msg.key.fromMe) return
+
+    const from = msg.key.remoteJid
+
+    // ── Suporte a múltiplos grupos ──────────────────────────────────────────
+    if (!config.gruposPermitidos.includes(from)) return
+
+    // Ignora mensagens acumuladas offline (> 30s)
+    const msgTs = (msg.messageTimestamp ?? 0) * 1000
+    if (Date.now() - msgTs > 30_000) return
+
+    const sender    = msg.key.participant || from
+    const usuarioId = sender.split("@")[0]
+    const messageId = msg.key.id
+
+    const text =
+      msg.message?.conversation ||
+      msg.message?.extendedTextMessage?.text || ""
+
+    const mensagem = text.trim()
+    if (!mensagem) return
+
+    try {
+      // ── Rate limiting ────────────────────────────────────────────────────
+      if (!verificarRateLimit(usuarioId)) {
+        await enviar(sock, from,
+          `⏳ Você está enviando mensagens muito rápido. Aguarde um momento.`)
+        return
+      }
+
+      // ── Deduplicação ─────────────────────────────────────────────────────
+      let usuario = getUsuario(usuarioId)
+      if (usuario?.ultimo_msg_id === messageId) return
+      if (usuario) atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
+
+      // ── Novo usuário ──────────────────────────────────────────────────────
+      if (!usuario) {
+        criarUsuario(usuarioId)
+        atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
+        await enviar(sock, from, "👋 Olá! Como você quer ser chamado(a)?")
+        return
+      }
+
+      // ── Aguardando nome ───────────────────────────────────────────────────
+      if (usuario.aguardando_nome) {
+        const nome = mensagem.trim().slice(0, 50)   // limita tamanho do nome
+        atualizarUsuario(usuarioId, { nome, aguardando_nome: 0 })
+        await enviar(sock, from,
+          `✅ Perfeito! Vou te chamar de *${nome}*.\n\nDigite *comandos* para ver o que posso fazer.`)
+        return
+      }
+
+      // ── Limpar estado expirado ────────────────────────────────────────────
+      limparEstadoExpirado(usuarioId)
+      usuario = getUsuario(usuarioId)
+
+      // ── Fluxo da caixinha ─────────────────────────────────────────────────
+      if (usuario.aguardando_caixinha) {
+        await handleRespostaCaixinha(sock, from, usuarioId, usuario.nome, mensagem)
+        return
+      }
+
+      // ── Comandos e lançamentos ────────────────────────────────────────────
+      logMensagem(usuarioId, mensagem.split(" ")[0])
+      await processarMensagem(sock, from, usuarioId, mensagem)
+
+    } catch (err) {
+      logger.error({ err: err.message, usuarioId }, "Erro ao processar mensagem")
+    }
+  })
+}
+
+// ── Inicia painel web (independente da conexão WA) ────────────────────────────
+iniciarPainel(statusBot)

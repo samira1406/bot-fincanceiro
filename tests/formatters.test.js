@@ -1,0 +1,177 @@
+import { describe, it, expect } from "vitest"
+import {
+  fmtValor, fmtLista, fmtCategorias, fmtSaldo,
+  fmtBarraMeta, fmtHistoricoLancamentos,
+  fmtRelatorioMensal, fmtRelatorioGeral,
+} from "../src/formatters.js"
+
+describe("fmtValor", () => {
+  it("formata inteiro", () => {
+    expect(fmtValor(1000)).toBe("1.000,00")
+  })
+
+  it("formata decimal", () => {
+    expect(fmtValor(120.5)).toBe("120,50")
+  })
+
+  it("formata zero", () => {
+    expect(fmtValor(0)).toBe("0,00")
+  })
+})
+
+describe("fmtSaldo", () => {
+  it("positivo tem emoji verde e sinal +", () => {
+    const s = fmtSaldo(500)
+    expect(s).toContain("🟢")
+    expect(s).toContain("+")
+  })
+
+  it("negativo tem emoji vermelho", () => {
+    const s = fmtSaldo(-200)
+    expect(s).toContain("🔴")
+  })
+
+  it("zero é positivo", () => {
+    expect(fmtSaldo(0)).toContain("🟢")
+  })
+})
+
+describe("fmtBarraMeta", () => {
+  it("barra cheia a 100%", () => {
+    const b = fmtBarraMeta(1000, 1000)
+    expect(b).toContain("100%")
+    expect(b).not.toContain("░")
+  })
+
+  it("barra vazia a 0%", () => {
+    const b = fmtBarraMeta(0, 1000)
+    expect(b).toContain("0%")
+    expect(b).not.toContain("█")
+  })
+
+  it("barra pela metade a 50%", () => {
+    const b = fmtBarraMeta(500, 1000)
+    expect(b).toContain("50%")
+    // 5 blocos cheios, 5 vazios
+    expect(b).toContain("█████░░░░░")
+  })
+
+  it("cap em 100% mesmo quando ultrapassa", () => {
+    const b = fmtBarraMeta(2000, 1000)
+    expect(b).toContain("100%")
+  })
+})
+
+describe("fmtLista", () => {
+  it("retorna placeholder para lista vazia", () => {
+    expect(fmtLista([])).toContain("Nenhum")
+  })
+
+  it("numera e formata corretamente", () => {
+    const lista = [{ nome: "uber", categoria: "transporte", valor: 30 }]
+    const texto = fmtLista(lista)
+    expect(texto).toContain("1.")
+    expect(texto).toContain("uber")
+    expect(texto).toContain("transporte")
+    expect(texto).toContain("30,00")
+  })
+})
+
+describe("fmtCategorias", () => {
+  it("retorna placeholder vazio", () => {
+    expect(fmtCategorias([])).toContain("Nenhum")
+  })
+
+  it("formata corretamente", () => {
+    const grupos = [{ categoria: "alimentacao", total: 450 }]
+    const texto  = fmtCategorias(grupos)
+    expect(texto).toContain("alimentacao")
+    expect(texto).toContain("450,00")
+  })
+})
+
+describe("fmtHistoricoLancamentos", () => {
+  it("retorna mensagem amigável quando não há lançamentos", () => {
+    const texto = fmtHistoricoLancamentos([])
+    expect(texto).toContain("Você ainda não tem lançamentos registrados")
+    expect(texto).toContain("gastei 35 no mercado")
+  })
+
+  it("formata últimos lançamentos com data, tipo, valor, categoria e descrição", () => {
+    const texto = fmtHistoricoLancamentos([
+      {
+        tipo: "gasto",
+        valor: 35,
+        categoria: "mercado",
+        nome: "mercado",
+        criado_em: new Date(2026, 5, 16, 12).getTime(),
+      },
+      {
+        tipo: "entrada",
+        valor: 2500,
+        categoria: "salario",
+        nome: "salario",
+        criado_em: new Date(2026, 5, 16, 13).getTime(),
+      },
+    ])
+
+    expect(texto).toContain("Últimos lançamentos")
+    expect(texto).toContain("16/06 - Despesa - R$ 35,00 - Mercado - mercado")
+    expect(texto).toContain("16/06 - Receita - R$ 2.500,00 - Salario - salario")
+  })
+})
+
+describe("fmtRelatorioMensal", () => {
+  const entradas = [{ nome: "salario", categoria: "geral", valor: 5000 }]
+  const gastos   = [{ nome: "mercado", categoria: "alimentacao", valor: 800 }]
+
+  it("contém nome do usuário", () => {
+    const { texto } = fmtRelatorioMensal("João", entradas, gastos, null)
+    expect(texto).toContain("JOÃO")
+  })
+
+  it("calcula saldo corretamente", () => {
+    const { saldo, totalE, totalG } = fmtRelatorioMensal("x", entradas, gastos, null)
+    expect(totalE).toBe(5000)
+    expect(totalG).toBe(800)
+    expect(saldo).toBe(4200)
+  })
+
+  it("sem meta não mostra seção META", () => {
+    const { texto } = fmtRelatorioMensal("x", entradas, gastos, null)
+    expect(texto).not.toContain("META DO MÊS")
+  })
+
+  it("com meta dentro do limite mostra ✅", () => {
+    const { texto } = fmtRelatorioMensal("x", entradas, gastos, 1000)
+    expect(texto).toContain("✅")
+  })
+
+  it("com meta ultrapassada mostra ⚠️", () => {
+    const { texto } = fmtRelatorioMensal("x", entradas, gastos, 500)
+    expect(texto).toContain("⚠️")
+  })
+})
+
+describe("fmtRelatorioGeral", () => {
+  it("calcula totais gerais", () => {
+    const usuarios = [
+      { nome: "Ana",  totalE: 3000, totalG: 1000 },
+      { nome: "Rui",  totalE: 4000, totalG: 2000 },
+    ]
+    const { resumo } = fmtRelatorioGeral(usuarios)
+    expect(resumo).toContain("7.000,00")  // total entradas
+    expect(resumo).toContain("3.000,00")  // total gastos
+  })
+
+  it("ranking ordena por maior gasto", () => {
+    const usuarios = [
+      { nome: "Ana",  totalE: 0, totalG: 500 },
+      { nome: "Rui",  totalE: 0, totalG: 2000 },
+    ]
+    const { ranking } = fmtRelatorioGeral(usuarios)
+    const posAna = ranking.indexOf("Ana")
+    const posRui = ranking.indexOf("Rui")
+    expect(posRui).toBeLessThan(posAna)   // Rui aparece primeiro
+  })
+})
