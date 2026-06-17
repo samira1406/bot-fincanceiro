@@ -1,6 +1,6 @@
 import pino   from "pino"
 import fs     from "fs"
-import { config } from "./config.js"
+import { config, mascararNumeroBeta } from "./config.js"
 
 const isDev = process.env.NODE_ENV !== "production"
 
@@ -19,5 +19,5 @@ export const logger = pino(
  * @param {string} comando  — apenas a primeira palavra (o comando)
  */
 export function logMensagem(usuarioId, comando) {
-  logger.info({ usuarioId, comando }, "msg recebida")
+  logger.info({ usuarioId: mascararNumeroBeta(usuarioId), comando }, "msg recebida")
 }

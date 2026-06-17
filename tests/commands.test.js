@@ -1,14 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ExcelJS from "exceljs"
 
+const configMock = vi.hoisted(() => {
+  const normalizarNumeroBeta = (valor) =>
+    String(valor ?? "").split("@")[0].split(":")[0].replace(/\D/g, "")
+
+  return {
+    config: {
+      dbPath:              ":memory:",
+      logLevel:            "silent",
+      palavrasEntrada:     ["salario", "freela"],
+      valorMaximo:         100_000,
+      caixinhaPercentual:  0.3,
+      timeoutEstadoMs:     600_000,
+      beta:                { ativo: false, responderBloqueado: false, numerosAutorizados: [] },
+    },
+    normalizarNumeroBeta,
+    mascararNumeroBeta: (valor) => {
+      const numero = normalizarNumeroBeta(valor)
+      if (!numero) return ""
+      if (numero.length <= 8) return "****"
+      return `${numero.slice(0, 5)}****${numero.slice(-4)}`
+    },
+  }
+})
+
 vi.mock("../src/config.js", () => ({
-  config: {
-    dbPath:              ":memory:",
-    logLevel:            "silent",
-    palavrasEntrada:     ["salario", "freela"],
-    valorMaximo:         100_000,
-    caixinhaPercentual:  0.3,
-    timeoutEstadoMs:     600_000,
+  config: configMock.config,
+  normalizarNumeroBeta: configMock.normalizarNumeroBeta,
+  mascararNumeroBeta: configMock.mascararNumeroBeta,
+  usuarioAutorizadoBeta: (usuarioId, beta = configMock.config.beta) => {
+    if (!beta?.ativo) return true
+
+    const numero = configMock.normalizarNumeroBeta(usuarioId)
+    const autorizados = new Set(
+      (beta.numerosAutorizados ?? [])
+        .map(configMock.normalizarNumeroBeta)
+        .filter(Boolean)
+    )
+
+    return autorizados.has(numero)
   },
 }))
 
@@ -21,7 +52,7 @@ const { processarMensagem } = await import("../src/commands.js")
 const {
   criarUsuario, atualizarUsuario, inserirLancamento,
   criarOuAtualizarMetaCategoria,
-  getSomaPorTipo, getUltimoLancamento, mesAtual, db,
+  getSomaPorTipo, getUltimoLancamento, getUsuario, mesAtual, db,
 } = await import("../src/database.js")
 
 let sock
@@ -51,6 +82,80 @@ beforeEach(() => {
     DELETE FROM usuarios;
   `)
   sock = { sendMessage: vi.fn() }
+  configMock.config.beta = { ativo: false, responderBloqueado: false, numerosAutorizados: [] }
+})
+
+describe("processarMensagem - beta fechado", () => {
+  it("permite usuário normalmente quando BETA_MODE=false", async () => {
+    configMock.config.beta = { ativo: false, responderBloqueado: false, numerosAutorizados: [] }
+    prepararUsuario("5511999999999")
+
+    await processarMensagem(sock, "grupo", "5511999999999", "gastei 35 no mercado")
+
+    expect(ultimaResposta()).toContain("despesa registrada")
+    expect(getUltimoLancamento("5511999999999").valor).toBe(35)
+  })
+
+  it("permite usuário normalmente quando BETA_MODE está ausente", async () => {
+    delete configMock.config.beta
+    prepararUsuario("5511999999999")
+
+    await processarMensagem(sock, "grupo", "5511999999999", "recebi 2500 salario")
+
+    expect(ultimaResposta()).toContain("entrada registrada")
+    expect(getUltimoLancamento("5511999999999").tipo).toBe("entrada")
+  })
+
+  it("ignora silenciosamente número não autorizado com BETA_MODE=true", async () => {
+    configMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5511999999999"] }
+
+    await processarMensagem(sock, "grupo", "5511888888888", "ajuda")
+
+    expect(sock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5511888888888")).toBeNull()
+  })
+
+  it("responde beta fechado quando BETA_BLOCKED_REPLY=true", async () => {
+    configMock.config.beta = { ativo: true, responderBloqueado: true, numerosAutorizados: ["5511999999999"] }
+
+    await processarMensagem(sock, "grupo", "5511888888888", "ajuda")
+
+    expect(ultimaResposta()).toContain("Este bot está em beta fechado")
+    expect(ultimaResposta()).toContain("liberar seu número")
+    expect(getUsuario("5511888888888")).toBeNull()
+  })
+
+  it("permite número autorizado com BETA_MODE=true", async () => {
+    configMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5511999999999"] }
+    prepararUsuario("5511999999999")
+
+    await processarMensagem(sock, "grupo", "5511999999999", "ajuda")
+
+    expect(ultimaResposta()).toContain("assistente financeiro")
+    expect(ultimaResposta()).toContain("gastei 35 no mercado")
+  })
+
+  it("permite número autorizado mesmo com sufixo do WhatsApp", async () => {
+    configMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5511999999999"] }
+    const usuarioId = "5511999999999@s.whatsapp.net"
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, "gastei 35 no mercado")
+
+    expect(ultimaResposta()).toContain("despesa registrada")
+    expect(getUltimoLancamento(usuarioId).categoria).toBe("mercado")
+  })
+
+  it("número não autorizado não registra lançamento", async () => {
+    configMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5511999999999"] }
+    const usuarioId = "5511777777777@s.whatsapp.net"
+
+    await processarMensagem(sock, "grupo", usuarioId, "gastei 35 no mercado")
+
+    expect(sock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario(usuarioId)).toBeNull()
+    expect(getUltimoLancamento(usuarioId)).toBeNull()
+  })
 })
 
 describe("processarMensagem - ajuda e onboarding", () => {

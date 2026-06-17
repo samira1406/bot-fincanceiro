@@ -129,6 +129,16 @@ resumo
 Ou mande “ajuda” para ver os comandos.`
 }
 
+/**
+ * Mensagem para contatos bloqueados no beta fechado.
+ * @returns {string}
+ */
+export function fmtBetaFechado() {
+  return `Este bot está em beta fechado no momento.
+
+Se você recebeu um convite para testar, entre em contato com a equipe para liberar seu número.`
+}
+
 const categoriasAmigaveis = {
   alimentacao: "Alimentação",
   farmacia:    "Farmácia",

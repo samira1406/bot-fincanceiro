@@ -3,7 +3,7 @@
  * Armazenado em memória: sem dependência externa, zera com o processo.
  */
 
-import { config } from "./config.js"
+import { config, mascararNumeroBeta } from "./config.js"
 import { logger }  from "./logger.js"
 
 /** @type {Map<string, number[]>} usuarioId → timestamps de mensagens */
@@ -23,7 +23,7 @@ export function verificarRateLimit(usuarioId) {
     .filter(ts => agora - ts < janela)   // mantém apenas os da última janela
 
   if (timestamps.length >= limite) {
-    logger.warn({ usuarioId, msgs: timestamps.length }, "Rate limit atingido")
+    logger.warn({ usuarioId: mascararNumeroBeta(usuarioId), msgs: timestamps.length }, "Rate limit atingido")
     return false
   }
 

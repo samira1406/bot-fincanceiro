@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
-  fmtAjuda, fmtBoasVindas, fmtMensagemNaoEntendida,
+  fmtAjuda, fmtBetaFechado, fmtBoasVindas, fmtMensagemNaoEntendida,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
   fmtHistoricoLancamentos,
   fmtListaMetasCategoria, fmtMetaCategoriaAtualizada,
@@ -50,6 +50,13 @@ describe("mensagens de ajuda e onboarding", () => {
     expect(texto).toContain("Não consegui entender essa mensagem")
     expect(texto).toContain("gastei 35 no mercado")
     expect(texto).toContain("ajuda")
+  })
+
+  it("formata mensagem de beta fechado", () => {
+    const texto = fmtBetaFechado()
+
+    expect(texto).toContain("Este bot está em beta fechado")
+    expect(texto).toContain("liberar seu número")
   })
 })
 

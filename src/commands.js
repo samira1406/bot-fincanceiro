@@ -3,7 +3,7 @@
  * Dispatcher baseado em Map — sem if/else em cadeia.
  */
 
-import { config }        from "./config.js"
+import { config, usuarioAutorizadoBeta } from "./config.js"
 import { logger }        from "./logger.js"
 import {
   getUsuario, atualizarUsuario, inserirLancamento,
@@ -22,7 +22,7 @@ import {
 import {
   fmtValor, fmtLista, fmtRelatorioMensal, fmtRelatorioGeral,
   fmtCategorias, fmtSaldo, fmtBarraMeta, fmtHistoricoLancamentos,
-  fmtAjuda, fmtMensagemNaoEntendida,
+  fmtAjuda, fmtBetaFechado, fmtMensagemNaoEntendida,
   fmtTipoLancamento, fmtCategoriaAmigavel, fmtDescricaoLancamento,
   fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
   fmtListaMetasCategoria, fmtProgressoMetaCategoria,
@@ -408,8 +408,16 @@ export async function handleRespostaCaixinha(sock, from, usuarioId, nome, mensag
  * @param {string} from
  * @param {string} usuarioId
  * @param {string} mensagem
+ * @param {{ pularBeta?: boolean }} [opcoes]
  */
-export async function processarMensagem(sock, from, usuarioId, mensagem) {
+export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes = {}) {
+  if (!opcoes.pularBeta && !usuarioAutorizadoBeta(usuarioId)) {
+    if (config.beta?.responderBloqueado) {
+      await enviar(sock, from, fmtBetaFechado())
+    }
+    return
+  }
+
   const usuario = getUsuario(usuarioId)
   const nome    = usuario.nome
   const lower   = mensagem.toLowerCase().trim()

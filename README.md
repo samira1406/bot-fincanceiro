@@ -1,6 +1,6 @@
 # Bot de Finanças WhatsApp v3.0
 
-Bot profissional para controle financeiro em grupo do WhatsApp.
+Bot profissional para controle financeiro em conversas privadas e grupos autorizados do WhatsApp.
 
 ---
 
@@ -15,7 +15,7 @@ Bot profissional para controle financeiro em grupo do WhatsApp.
 | Painel web de administração | ✅ |
 | Health check endpoint | ✅ |
 | Rate limiting por usuário | ✅ |
-| Suporte a múltiplos grupos | ✅ |
+| Atendimento privado e grupos autorizados com beta fechado | ✅ |
 | Exportação CSV pelo WhatsApp | ✅ |
 | Categorias de gasto | ✅ |
 | Metas mensais com alertas | ✅ |
@@ -40,7 +40,7 @@ npm install
 
 # 2. Configurar variáveis de ambiente
 cp .env.example .env
-# Edite o .env — pelo menos GRUPO_PERMITIDO e PAINEL_TOKEN
+# Edite o .env — pelo menos PAINEL_TOKEN
 
 # 3. Rodar testes (opcional mas recomendado)
 npm test
@@ -64,18 +64,101 @@ pm2 save && pm2 startup
 
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `GRUPO_PERMITIDO` | — | JID do grupo (obrigatório) |
-| `GRUPOS_EXTRAS` | — | Grupos adicionais separados por vírgula |
+| `GRUPO_PERMITIDO` | — | JID legado para rotinas automáticas |
+| `GRUPOS_EXTRAS` | — | Configuração legada |
 | `PALAVRAS_ENTRADA` | salario,freela,bonus,pix | Palavras que classificam entradas |
 | `CAIXINHA_PERCENTUAL` | 30 | % sugerido para a caixinha |
 | `VALOR_MAXIMO` | 100000 | Teto por lançamento (R$) |
 | `TIMEOUT_ESTADO_MINUTOS` | 10 | Minutos para expirar estado pendente |
 | `HORA_LEMBRETE_MENSAL` | 20 | Hora do lembrete automático |
 | `RATE_LIMIT_MSG_POR_MINUTO` | 15 | Máx. mensagens por usuário por minuto |
+| `BETA_MODE` | false | Ativa o beta fechado quando `true` |
+| `BETA_BLOCKED_REPLY` | false | Define se bloqueados recebem aviso; o padrão seguro é ignorar |
+| `BETA_DEBUG` | false | Liga logs locais mascarados para diagnosticar whitelist |
+| `BETA_DEBUG_SHOW_RAW` | false | Mostra valores sem máscara no debug; mantenha `false` por privacidade |
+| `BETA_ALLOWED_NUMBERS` | — | Números autorizados, separados por vírgula |
+| `BETA_ALLOWED_JIDS` | — | Fallback opcional para JIDs como `@lid`, separados por vírgula |
+| `BETA_ALLOWED_GROUPS` | — | Grupos autorizados, separados por vírgula |
+| `BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT` | true | Em grupo autorizado, exige participante autorizado |
 | `PAINEL_PORTA` | 3000 | Porta do painel web |
 | `PAINEL_TOKEN` | — | Token de acesso ao painel (obrigatório) |
 | `BACKUP_MANTER_DIAS` | 7 | Dias de retenção dos backups |
 | `LOG_LEVEL` | info | Nível de log |
+
+---
+
+## Conversas Privadas E Grupos
+
+Por segurança, o bot foi projetado para funcionar em conversas privadas autorizadas e em grupos explicitamente autorizados.
+
+Mensagens enviadas em grupos fora de `BETA_ALLOWED_GROUPS` são ignoradas silenciosamente: o bot não responde, não cria usuário, não registra lançamento, não cria meta e não exporta planilha.
+
+Em grupos autorizados, o padrão seguro é `BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT=true`. Assim, o bot processa apenas mensagens enviadas por participantes liberados em `BETA_ALLOWED_NUMBERS` ou `BETA_ALLOWED_JIDS`.
+
+Mensagens enviadas pelo próprio número do bot, marcadas pelo WhatsApp como `fromMe=true`, também são ignoradas para evitar respostas automáticas quando alguém usa o WhatsApp Web do número de trabalho.
+
+---
+
+## Modo Beta Fechado
+
+Use o beta fechado para liberar o bot apenas para números convidados.
+
+Exemplo no `.env`:
+
+```env
+BETA_MODE=true
+BETA_BLOCKED_REPLY=false
+BETA_DEBUG=false
+BETA_ALLOWED_NUMBERS=5511000000000,5511000000001
+BETA_ALLOWED_JIDS=1234567890@lid,0987654321@lid
+BETA_ALLOWED_GROUPS=120363000000000000@g.us
+BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT=true
+```
+
+Com `BETA_MODE=false` ou ausente, o bot continua funcionando normalmente para qualquer usuário em conversa privada.
+
+Com `BETA_MODE=true`, somente os números listados em `BETA_ALLOWED_NUMBERS` conseguem usar comandos como `ajuda`, `gastei 35 no mercado`, `recebi 2500 salario`, `resumo`, `historico`, `meta mercado 600` e `exportar planilha`.
+
+Com `BETA_BLOCKED_REPLY=false`, números não autorizados são ignorados silenciosamente. Isso evita responder clientes quando o número do bot também é um número de trabalho.
+
+Com `BETA_BLOCKED_REPLY=true`, números não autorizados recebem uma mensagem avisando que o bot está em beta fechado. Mesmo nesse modo, nenhum lançamento, receita, meta ou exportação é registrado para esse contato.
+
+Use números com DDI e DDD. Exemplo: `5515999999999`.
+
+Os números podem ser informados apenas com dígitos. O bot normaliza espaços, símbolos, sufixos do WhatsApp e variações brasileiras com ou sem nono dígito antes de comparar.
+
+Se o WhatsApp/Baileys entregar um identificador `@lid` sem telefone claro, use `BETA_DEBUG=true` para ver o identificador mascarado nos logs locais. Se for realmente necessário liberar por JID, preencha `BETA_ALLOWED_JIDS` no `.env` local com o valor correspondente, sem commitar esse arquivo:
+
+```env
+BETA_ALLOWED_JIDS=contato-ficticio@lid
+```
+
+Para liberar um grupo específico, use o JID do grupo em `BETA_ALLOWED_GROUPS`:
+
+```env
+BETA_ALLOWED_GROUPS=120363000000000000@g.us
+BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT=true
+```
+
+Com `BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT=true`, participantes fora da whitelist são ignorados silenciosamente mesmo dentro de grupo autorizado.
+
+Para diagnosticar sem responder clientes do número de trabalho:
+
+```env
+BETA_MODE=true
+BETA_BLOCKED_REPLY=false
+BETA_DEBUG=true
+BETA_DEBUG_SHOW_RAW=false
+```
+
+Exemplo de log mascarado:
+
+```text
+[BETA_DEBUG] privado=true grupo=false fromMe=false remoteJid=55159****9999@s.whatsapp.net sender=55159****9999@s.whatsapp.net autorizado=true acao=processado
+[BETA_DEBUG] privado=false grupo=true fromMe=false group=12036****0000@g.us participant=1234****7890@lid autorizado=true acao=processado
+```
+
+Nunca versione o `.env`.
 
 ---
 
@@ -241,7 +324,7 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 ```
 ├── index.js
 ├── src/
-│   ├── bot.js            ← conexão Baileys, multi-grupo, rate limit
+│   ├── bot.js            ← conexão Baileys, privado, rate limit
 │   ├── commands.js       ← todos os handlers + dispatcher
 │   ├── database.js       ← SQLite, migrations, queries, CSV
 │   ├── exporters.js      ← geração de CSV e arquivos em exports/

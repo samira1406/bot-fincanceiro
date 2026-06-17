@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 
 vi.mock("../src/config.js", () => ({
   config: { rateLimitPorMinuto: 5, logLevel: "silent" },
+  mascararNumeroBeta: (valor) => String(valor ?? ""),
 }))
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
