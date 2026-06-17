@@ -81,6 +81,17 @@ pm2 save && pm2 startup
 
 ## Comandos
 
+### Ajuda
+```
+ajuda       # mostra exemplos principais
+comandos    # mostra exemplos principais
+como usar   # mostra exemplos principais
+menu        # mostra exemplos principais
+inicio      # mostra exemplos principais
+início      # mostra exemplos principais
+start       # mostra exemplos principais
+```
+
 ### Lançamentos
 ```
 mercado 120,50                # gasto, categoria mercado
@@ -113,7 +124,37 @@ historico        # últimos 5 lançamentos
 histórico        # últimos 5 lançamentos
 ultimos gastos   # últimos 5 lançamentos
 ultimos lancamentos # últimos 5 lançamentos
-exportar         # CSV por WhatsApp
+```
+
+### Exportação de Planilha
+```
+exportar csv        # CSV simples por WhatsApp
+exportar            # CSV simples por WhatsApp
+exportar planilha   # XLSX visual por WhatsApp
+baixar planilha     # XLSX visual por WhatsApp
+gerar planilha      # XLSX visual por WhatsApp
+minha planilha      # XLSX visual por WhatsApp
+planilha bonita     # XLSX visual por WhatsApp
+planilha excel      # XLSX visual por WhatsApp
+exportar excel      # XLSX visual por WhatsApp
+xlsx                # XLSX visual por WhatsApp
+exportar xlsx       # XLSX visual por WhatsApp
+```
+
+O CSV é a versão simples. O XLSX é a versão visual com abas de Resumo e Lancamentos, totais do mês, gastos por categoria e metas por categoria.
+
+Exemplo:
+```
+gastei 35 no mercado
+recebi 2500 salario
+exportar planilha
+```
+
+Os arquivos são gerados em `exports/` e enviados pelo WhatsApp. A pasta `exports/` é temporária e não deve ir para o Git.
+
+O CSV contém apenas os lançamentos do usuário atual, com as colunas:
+```
+data,tipo,categoria,descricao,valor
 ```
 
 ### Metas
@@ -203,6 +244,7 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 │   ├── bot.js            ← conexão Baileys, multi-grupo, rate limit
 │   ├── commands.js       ← todos os handlers + dispatcher
 │   ├── database.js       ← SQLite, migrations, queries, CSV
+│   ├── exporters.js      ← geração de CSV e arquivos em exports/
 │   ├── formatters.js     ← formatação de mensagens
 │   ├── validators.js     ← validação de inputs
 │   ├── scheduler.js      ← cron jobs
@@ -215,6 +257,7 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 │       └── painel.js     ← painel de administração Express
 ├── tests/
 │   ├── validators.test.js
+│   ├── exporters.test.js
 │   ├── formatters.test.js
 │   ├── database.test.js
 │   └── rateLimiter.test.js
@@ -224,6 +267,7 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 │   └── financas.db       ← gerado automaticamente
 ├── auth/                 ← credenciais WA (gerado no 1º uso)
 ├── logs/
+├── exports/              ← CSVs temporários (ignorado pelo Git)
 ├── .env.example
 └── ecosystem.config.cjs
 ```

@@ -58,6 +58,77 @@ export function fmtCapitalizado(texto) {
   return texto.charAt(0).toUpperCase() + texto.slice(1)
 }
 
+/**
+ * Mensagem principal de ajuda para usuários beta.
+ * @returns {string}
+ */
+export function fmtAjuda() {
+  return `Olá! Eu sou seu assistente financeiro pelo WhatsApp.
+
+Você pode me mandar mensagens assim:
+
+💸 Registrar gasto:
+gastei 35 no mercado
+gastei 80 no ifood
+25 uber
+
+💰 Registrar entrada:
+recebi 2500 salario
+entrou 500 pix
+ganhei 1200 freelance
+
+📊 Ver resumo:
+resumo
+
+🧾 Ver histórico:
+historico
+
+🎯 Criar meta:
+meta mercado 600
+
+📁 Exportar planilha:
+exportar csv
+exportar planilha
+
+✏️ Corrigir:
+corrigir ultimo para 45
+
+🗑️ Apagar:
+excluir ultimo`
+}
+
+/**
+ * Mensagem curta de boas-vindas para primeiro contato.
+ * @returns {string}
+ */
+export function fmtBoasVindas() {
+  return `Olá! Eu sou seu assistente financeiro pelo WhatsApp.
+
+Você pode me mandar:
+“gastei 35 no mercado”
+“recebi 2500 salario”
+“resumo”
+“meta mercado 600”
+
+Para ver todos os comandos, mande:
+ajuda`
+}
+
+/**
+ * Mensagem para quando o bot não entende o texto recebido.
+ * @returns {string}
+ */
+export function fmtMensagemNaoEntendida() {
+  return `Não consegui entender essa mensagem.
+
+Tente algo como:
+gastei 35 no mercado
+recebi 2500 salario
+resumo
+
+Ou mande “ajuda” para ver os comandos.`
+}
+
 const categoriasAmigaveis = {
   alimentacao: "Alimentação",
   farmacia:    "Farmácia",

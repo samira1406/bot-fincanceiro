@@ -10,6 +10,7 @@ import { config }                                            from "./config.js"
 import { logger, logMensagem }                               from "./logger.js"
 import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
 import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
+import { fmtBoasVindas }                                      from "./formatters.js"
 import { iniciarScheduler }                                  from "./scheduler.js"
 import { iniciarPainel }                                     from "./web/painel.js"
 import { verificarRateLimit }                                from "./rateLimiter.js"
@@ -150,7 +151,8 @@ export async function iniciarBot() {
       if (!usuario) {
         criarUsuario(usuarioId)
         atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
-        await enviar(sock, from, "👋 Olá! Como você quer ser chamado(a)?")
+        await enviar(sock, from,
+          `${fmtBoasVindas()}\n\nAntes de começar, como você quer ser chamado(a)?`)
         return
       }
 
@@ -159,7 +161,7 @@ export async function iniciarBot() {
         const nome = mensagem.trim().slice(0, 50)   // limita tamanho do nome
         atualizarUsuario(usuarioId, { nome, aguardando_nome: 0 })
         await enviar(sock, from,
-          `✅ Perfeito! Vou te chamar de *${nome}*.\n\nDigite *comandos* para ver o que posso fazer.`)
+          `✅ Perfeito! Vou te chamar de *${nome}*.\n\nMande *ajuda* para ver todos os comandos.`)
         return
       }
 

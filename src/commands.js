@@ -13,18 +13,23 @@ import {
   getTodosUsuarios, getSomaPorTipo, definirMeta, getMeta,
   criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
   calcularGastoCategoriaNoPeriodo,
-  gerarCSV, mesAtual,
+  mesAtual,
 } from "./database.js"
+import {
+  gerarCSVLancamentos, gerarXlsxFinanceiro,
+  salvarCSVExportacao, salvarXlsxExportacao, XLSX_MIMETYPE,
+} from "./exporters.js"
 import {
   fmtValor, fmtLista, fmtRelatorioMensal, fmtRelatorioGeral,
   fmtCategorias, fmtSaldo, fmtBarraMeta, fmtHistoricoLancamentos,
+  fmtAjuda, fmtMensagemNaoEntendida,
   fmtTipoLancamento, fmtCategoriaAmigavel, fmtDescricaoLancamento,
   fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
   fmtListaMetasCategoria, fmtProgressoMetaCategoria,
   fmtMetaCategoriaUltrapassada,
 } from "./formatters.js"
 import {
-  parseCorrecaoUltimo, parseLancamento,
+  parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
   parseMetaCategoria, parseValorSimples,
 } from "./validators.js"
 
@@ -113,38 +118,7 @@ async function verificarMeta(sock, from, usuarioId, nome, novoGasto) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function handleComandos(sock, from) {
-  await enviar(sock, from,
-`📋 *COMANDOS DISPONÍVEIS*
-
-*Registrar gasto:*
-  mercado 120,50
-  uber transporte 30
-  _(formato: nome [categoria] valor)_
-
-*Registrar entrada:*
-  salario 5000 | freela 800
-  recebi 2500 salario | entrou 500 pix
-
-*Relatórios:*
-  relatorio         — detalhado do mês
-  relatorio geral   — todos os membros
-  resumo            — saldo rápido
-  categorias        — gastos por categoria
-  historico         — últimos 5 lançamentos
-  exportar          — CSV do mês atual
-
-*Metas:*
-  meta 3000         — define meta mensal
-  meta ver          — progresso da meta
-  meta mercado 600  — meta mensal por categoria
-  metas             — lista metas por categoria
-
-*Apagar:*
-  apagar ultimo | excluir ultimo
-  apagar hoje | apagar semana | apagar mes
-
-*Corrigir:*
-  corrigir ultimo para 45`)
+  await enviar(sock, from, fmtAjuda())
 }
 
 async function handleResumo(sock, from, usuarioId, nome) {
@@ -230,10 +204,50 @@ async function handleHistorico(sock, from, usuarioId, nome) {
 
 async function handleExportar(sock, from, usuarioId, nome) {
   const mes = mesAtual()
-  const csv = gerarCSV(usuarioId, mes)
+  const lancamentos = getLancamentosPorMes(usuarioId, mes)
+
+  if (!lancamentos.length) {
+    await enviar(sock, from,
+      "Você ainda não tem lançamentos para exportar.\nMande algo como: gastei 35 no mercado")
+    return
+  }
+
+  const csv = gerarCSVLancamentos(lancamentos)
+  const { nomeArquivo } = salvarCSVExportacao({ usuarioId, mes, csv })
   const buf = Buffer.from(csv, "utf8")
-  await enviarDocumento(sock, from, buf, `financas-${nome}-${mes}.csv`, "text/csv")
-  await enviar(sock, from, `📎 *${nome}*, aqui está o CSV do mês ${mes}!`)
+  await enviarDocumento(sock, from, buf, nomeArquivo, "text/csv")
+  await enviar(sock, from,
+    `Sua planilha foi gerada com sucesso.\nEla contém seus lançamentos deste mês.`)
+}
+
+async function handleExportarXlsx(sock, from, usuarioId, nome) {
+  const mes = mesAtual()
+  const lancamentos = getLancamentosPorMes(usuarioId, mes)
+
+  if (!lancamentos.length) {
+    await enviar(sock, from,
+      "Você ainda não tem lançamentos para exportar.\nMande algo como: gastei 35 no mercado")
+    return
+  }
+
+  const { mes: mesNumero, ano } = periodoAtual()
+  const metas = listarMetasCategoria(usuarioId, mesNumero, ano).map(meta => ({
+    ...meta,
+    gasto: calcularGastoCategoriaNoPeriodo(usuarioId, meta.categoria, mesNumero, ano),
+  }))
+
+  const usuario = getUsuario(usuarioId)
+  const buffer = await gerarXlsxFinanceiro({ usuario, usuarioId, mes, lancamentos, metas })
+  const { nomeArquivo } = salvarXlsxExportacao({
+    usuarioId,
+    nomeUsuario: usuario?.nome ?? nome,
+    mes,
+    buffer,
+  })
+
+  await enviarDocumento(sock, from, buffer, nomeArquivo, XLSX_MIMETYPE)
+  await enviar(sock, from,
+    "Sua planilha Excel foi gerada com sucesso.\nEla contém seus lançamentos e um resumo do mês.")
 }
 
 async function handleMeta(sock, from, usuarioId, nome, partes) {
@@ -403,7 +417,13 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
 
   // ── Comandos exatos (Map lookup O(1)) ────────────────────────────────────
   const comandos = {
+    "ajuda":           () => handleComandos(sock, from),
     "comandos":        () => handleComandos(sock, from),
+    "como usar":       () => handleComandos(sock, from),
+    "menu":            () => handleComandos(sock, from),
+    "inicio":          () => handleComandos(sock, from),
+    "início":          () => handleComandos(sock, from),
+    "start":           () => handleComandos(sock, from),
     "resumo":          () => handleResumo(sock, from, usuarioId, nome),
     "relatorio":       () => handleRelatorio(sock, from, usuarioId, nome),
     "relatorio geral": () => handleRelatorioGeral(sock, from),
@@ -418,6 +438,16 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
     "minhas metas":   () => handleListarMetasCategoria(sock, from, usuarioId),
     "ver metas":      () => handleListarMetasCategoria(sock, from, usuarioId),
     "exportar":        () => handleExportar(sock, from, usuarioId, nome),
+    "exportar csv":    () => handleExportar(sock, from, usuarioId, nome),
+    "exportar planilha": () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "baixar planilha": () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "gerar planilha":  () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "minha planilha":  () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "planilha bonita": () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "planilha excel":  () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "exportar excel":  () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "xlsx":            () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "exportar xlsx":   () => handleExportarXlsx(sock, from, usuarioId, nome),
     "apagar ultimo":   () => handleApagarUltimo(sock, from, usuarioId, nome),
     "apagar último":   () => handleApagarUltimo(sock, from, usuarioId, nome),
     "excluir ultimo":  () => handleApagarUltimo(sock, from, usuarioId, nome),
@@ -431,6 +461,22 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
 
   if (comandos[lower]) {
     await comandos[lower]()
+    return
+  }
+
+  const ajuda = parseAjuda(mensagem)
+  if (ajuda) {
+    await handleComandos(sock, from)
+    return
+  }
+
+  const exportacao = parseExportacao(mensagem)
+  if (exportacao) {
+    if (exportacao.formato === "xlsx") {
+      await handleExportarXlsx(sock, from, usuarioId, nome)
+    } else {
+      await handleExportar(sock, from, usuarioId, nome)
+    }
     return
   }
 
@@ -454,7 +500,10 @@ export async function processarMensagem(sock, from, usuarioId, mensagem) {
 
   // ── Lançamento ───────────────────────────────────────────────────────────
   const lancamento = parseLancamento(mensagem)
-  if (!lancamento) return   // mensagem desconhecida — ignora silenciosamente
+  if (!lancamento) {
+    await enviar(sock, from, fmtMensagemNaoEntendida())
+    return
+  }
 
   const { nome: nomeLanc, categoria, valor } = lancamento
   const tipo = lancamento.tipo ?? (config.palavrasEntrada.includes(nomeLanc) ? "entrada" : "gasto")

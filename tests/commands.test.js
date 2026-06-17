@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import ExcelJS from "exceljs"
 
 vi.mock("../src/config.js", () => ({
   config: {
@@ -34,6 +35,10 @@ function ultimaResposta() {
   return sock.sendMessage.mock.calls.at(-1)?.[1]?.text
 }
 
+function chamadaDocumento() {
+  return sock.sendMessage.mock.calls.find(([, payload]) => payload.document)
+}
+
 function periodoAtualTeste() {
   const d = new Date()
   return { mes: d.getMonth() + 1, ano: d.getFullYear() }
@@ -46,6 +51,36 @@ beforeEach(() => {
     DELETE FROM usuarios;
   `)
   sock = { sendMessage: vi.fn() }
+})
+
+describe("processarMensagem - ajuda e onboarding", () => {
+  it.each([
+    "ajuda",
+    "comandos",
+    "como usar",
+    "menu",
+    "inicio",
+    "início",
+    "start",
+  ])("responde ajuda para %s", async (mensagem) => {
+    prepararUsuario("user-a")
+
+    await processarMensagem(sock, "grupo", "user-a", mensagem)
+
+    expect(ultimaResposta()).toContain("assistente financeiro")
+    expect(ultimaResposta()).toContain("gastei 35 no mercado")
+    expect(ultimaResposta()).toContain("exportar planilha")
+  })
+
+  it("responde mensagem útil quando não entende", async () => {
+    prepararUsuario("user-a")
+
+    await processarMensagem(sock, "grupo", "user-a", "banana azul")
+
+    expect(ultimaResposta()).toContain("Não consegui entender essa mensagem")
+    expect(ultimaResposta()).toContain("recebi 2500 salario")
+    expect(ultimaResposta()).toContain("ajuda")
+  })
 })
 
 describe("processarMensagem - histórico", () => {
@@ -123,6 +158,106 @@ describe("processarMensagem - receitas naturais", () => {
     expect(getSomaPorTipo("user-a", "gasto", mesAtual())).toBe(35)
     expect(ultimaResposta()).toContain("Entradas: R$ 2.500,00")
     expect(ultimaResposta()).toContain("Gastos:   R$ 35,00")
+  })
+})
+
+describe("processarMensagem - exportação CSV", () => {
+  it("envia CSV do usuário atual com categorias formatadas", async () => {
+    prepararUsuario("user-a")
+    prepararUsuario("user-b")
+    inserirLancamento({ usuarioId: "user-a", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+    inserirLancamento({ usuarioId: "user-a", tipo: "entrada", nome: "salario", categoria: "salario", valor: 2500, mes: mesAtual() })
+    inserirLancamento({ usuarioId: "user-b", tipo: "gasto", nome: "uber", categoria: "transporte", valor: 99, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-a", "exportar csv")
+
+    const [, documento] = chamadaDocumento()
+    const csv = documento.document.toString("utf8")
+
+    expect(documento.fileName).toMatch(/^extrato_usuario_[a-f0-9]{8}_\d{4}-\d{2}\.csv$/)
+    expect(documento.mimetype).toBe("text/csv")
+    expect(csv.split("\n")[0]).toBe("data,tipo,categoria,descricao,valor")
+    expect(csv).toContain("despesa,Mercado,mercado,35.00")
+    expect(csv).toContain("receita,Salário,salario,2500.00")
+    expect(csv).not.toContain("uber")
+    expect(ultimaResposta()).toContain("Sua planilha foi gerada com sucesso")
+  })
+
+  it("mantém exportar csv gerando CSV", async () => {
+    prepararUsuario("user-a")
+    inserirLancamento({ usuarioId: "user-a", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-a", "exportar csv")
+
+    const [, documento] = chamadaDocumento()
+    expect(documento.fileName).toMatch(/\.csv$/)
+    expect(documento.mimetype).toBe("text/csv")
+  })
+
+  it("comando exportar planilha gera XLSX", async () => {
+    prepararUsuario("user-a")
+    inserirLancamento({ usuarioId: "user-a", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-a", "exportar planilha")
+
+    const [, documento] = chamadaDocumento()
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(documento.document)
+
+    expect(documento.fileName).toMatch(/^controle_financeiro_teste_\d{4}-\d{2}\.xlsx$/)
+    expect(documento.mimetype).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(["Resumo", "Lancamentos"])
+    expect(ultimaResposta()).toContain("Sua planilha Excel foi gerada com sucesso")
+  })
+
+  it("comando planilha bonita gera XLSX", async () => {
+    prepararUsuario("user-a")
+    inserirLancamento({ usuarioId: "user-a", tipo: "entrada", nome: "salario", categoria: "salario", valor: 2500, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-a", "planilha bonita")
+
+    const [, documento] = chamadaDocumento()
+    expect(documento.fileName).toMatch(/\.xlsx$/)
+    expect(documento.mimetype).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+  })
+
+  it("usuário A não exporta dados do usuário B no XLSX", async () => {
+    prepararUsuario("user-a")
+    prepararUsuario("user-b")
+    inserirLancamento({ usuarioId: "user-a", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+    inserirLancamento({ usuarioId: "user-b", tipo: "gasto", nome: "uber", categoria: "transporte", valor: 99, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-a", "xlsx")
+
+    const [, documento] = chamadaDocumento()
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(documento.document)
+    const valores = JSON.stringify(workbook.getWorksheet("Lancamentos").getSheetValues())
+
+    expect(valores).toContain("mercado")
+    expect(valores).not.toContain("uber")
+  })
+
+  it.each([
+    "exportar",
+    "exportar csv",
+    "baixar planilha",
+    "gerar planilha",
+    "minha planilha",
+    "exportar planilha",
+    "planilha bonita",
+    "planilha excel",
+    "exportar excel",
+    "xlsx",
+    "exportar xlsx",
+  ])("responde mensagem amigável sem lançamentos para %s", async (mensagem) => {
+    prepararUsuario("user-a")
+
+    await processarMensagem(sock, "grupo", "user-a", mensagem)
+
+    expect(chamadaDocumento()).toBeUndefined()
+    expect(ultimaResposta()).toContain("Você ainda não tem lançamentos para exportar")
+    expect(ultimaResposta()).toContain("gastei 35 no mercado")
   })
 })
 

@@ -13,6 +13,7 @@ import { resolve } from "path"
 import fs          from "fs"
 import { config }  from "./config.js"
 import { logger }  from "./logger.js"
+import { gerarCSVLancamentos } from "./exporters.js"
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 fs.mkdirSync(resolve(config.dbPath, ".."), { recursive: true })
@@ -448,12 +449,7 @@ export function calcularGastoCategoriaNoPeriodo(usuarioId, categoria, mes, ano) 
  */
 export function gerarCSV(usuarioId, mes) {
   const lancamentos = getLancamentosPorMes(usuarioId, mes)
-  const header = "data,tipo,nome,categoria,valor"
-  const linhas = lancamentos.map(l => {
-    const data = new Date(l.criado_em).toLocaleDateString("pt-BR")
-    return `${data},${l.tipo},${l.nome},${l.categoria},${l.valor.toFixed(2)}`
-  })
-  return [header, ...linhas].join("\n")
+  return gerarCSVLancamentos(lancamentos)
 }
 
 /** Expõe a instância db para o painel web (somente leitura) */

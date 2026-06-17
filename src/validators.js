@@ -182,6 +182,53 @@ export function parseCorrecaoUltimo(mensagem) {
   return { valor }
 }
 
+/**
+ * Parseia comandos de ajuda/onboarding.
+ * @param {string} mensagem
+ * @returns {{ tipo:"ajuda" }|null}
+ */
+export function parseAjuda(mensagem) {
+  const normalizado = normalizarComando(mensagem).replace(/\s+/g, " ")
+  const comandos = new Set([
+    "ajuda",
+    "comandos",
+    "como usar",
+    "menu",
+    "inicio",
+    "start",
+  ])
+
+  return comandos.has(normalizado) ? { tipo: "ajuda" } : null
+}
+
+/**
+ * Parseia comandos de exportação CSV.
+ * @param {string} mensagem
+ * @returns {{ tipo:"exportacao", formato:"csv"|"xlsx" }|null}
+ */
+export function parseExportacao(mensagem) {
+  const normalizado = normalizarComando(mensagem).replace(/\s+/g, " ")
+  const comandosCSV = new Set([
+    "exportar",
+    "exportar csv",
+  ])
+  const comandosXLSX = new Set([
+    "baixar planilha",
+    "gerar planilha",
+    "minha planilha",
+    "exportar planilha",
+    "planilha bonita",
+    "planilha excel",
+    "exportar excel",
+    "xlsx",
+    "exportar xlsx",
+  ])
+
+  if (comandosCSV.has(normalizado)) return { tipo: "exportacao", formato: "csv" }
+  if (comandosXLSX.has(normalizado)) return { tipo: "exportacao", formato: "xlsx" }
+  return null
+}
+
 function montarMetaCategoria(categoriaRaw, valorRaw) {
   const categoria = normalizarCategoria(categoriaRaw)
   if (!categoria || !categoriaValida(categoria)) {

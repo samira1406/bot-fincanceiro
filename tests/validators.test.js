@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from "vitest"
 import {
-  parseCorrecaoUltimo, parseLancamento,
+  parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
   parseMetaCategoria, parseValorSimples,
 } from "../src/validators.js"
 
@@ -180,6 +180,51 @@ describe("parseCorrecaoUltimo", () => {
 
   it("rejeita valor inválido", () => {
     expect(parseCorrecaoUltimo("corrigir ultimo para abc")).toBeNull()
+  })
+})
+
+describe("parseAjuda", () => {
+  it.each([
+    "ajuda",
+    "comandos",
+    "como usar",
+    "menu",
+    "inicio",
+    "início",
+    "start",
+  ])("parseia %s", (mensagem) => {
+    expect(parseAjuda(mensagem)).toEqual({ tipo: "ajuda" })
+  })
+
+  it("retorna null para comando que não é ajuda", () => {
+    expect(parseAjuda("resumo")).toBeNull()
+  })
+})
+
+describe("parseExportacao", () => {
+  it.each([
+    "exportar",
+    "exportar csv",
+  ])("parseia %s como CSV", (mensagem) => {
+    expect(parseExportacao(mensagem)).toEqual({ tipo: "exportacao", formato: "csv" })
+  })
+
+  it.each([
+    "baixar planilha",
+    "gerar planilha",
+    "minha planilha",
+    "exportar planilha",
+    "planilha bonita",
+    "planilha excel",
+    "exportar excel",
+    "xlsx",
+    "exportar xlsx",
+  ])("parseia %s como XLSX", (mensagem) => {
+    expect(parseExportacao(mensagem)).toEqual({ tipo: "exportacao", formato: "xlsx" })
+  })
+
+  it("retorna null para comando desconhecido", () => {
+    expect(parseExportacao("exportar tudo agora")).toBeNull()
   })
 })
 

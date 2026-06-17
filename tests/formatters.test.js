@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
+  fmtAjuda, fmtBoasVindas, fmtMensagemNaoEntendida,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
   fmtHistoricoLancamentos,
   fmtListaMetasCategoria, fmtMetaCategoriaAtualizada,
@@ -20,6 +21,35 @@ describe("fmtValor", () => {
 
   it("formata zero", () => {
     expect(fmtValor(0)).toBe("0,00")
+  })
+})
+
+describe("mensagens de ajuda e onboarding", () => {
+  it("formata mensagem de ajuda com comandos principais", () => {
+    const texto = fmtAjuda()
+
+    expect(texto).toContain("assistente financeiro")
+    expect(texto).toContain("gastei 35 no mercado")
+    expect(texto).toContain("recebi 2500 salario")
+    expect(texto).toContain("exportar planilha")
+    expect(texto).toContain("corrigir ultimo para 45")
+    expect(texto).toContain("excluir ultimo")
+  })
+
+  it("formata mensagem de boas-vindas", () => {
+    const texto = fmtBoasVindas()
+
+    expect(texto).toContain("Olá! Eu sou seu assistente financeiro")
+    expect(texto).toContain("gastei 35 no mercado")
+    expect(texto).toContain("ajuda")
+  })
+
+  it("formata mensagem de erro amigável", () => {
+    const texto = fmtMensagemNaoEntendida()
+
+    expect(texto).toContain("Não consegui entender essa mensagem")
+    expect(texto).toContain("gastei 35 no mercado")
+    expect(texto).toContain("ajuda")
   })
 })
 

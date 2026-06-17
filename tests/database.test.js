@@ -346,19 +346,41 @@ describe("Exportação CSV", () => {
   beforeEach(() => {
     criarUsuario(UID)
     atualizarUsuario(UID, { nome: "CsvTeste", aguardando_nome: 0 })
-    inserirLancamento({ usuarioId: UID, tipo: "gasto",  nome: "cafe",   categoria: "alimentacao", valor: 12.5,  mes: "6-2026" })
-    inserirLancamento({ usuarioId: UID, tipo: "entrada", nome: "freela", categoria: "geral",       valor: 1000, mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "gasto",  nome: "mercado", categoria: "mercado", valor: 35,   mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "entrada", nome: "salario", categoria: "salario", valor: 2500, mes: "6-2026" })
   })
 
   it("gera CSV com header correto", () => {
     const csv = gerarCSV(UID, "6-2026")
-    expect(csv).toContain("data,tipo,nome,categoria,valor")
+    expect(csv.split("\n")[0]).toBe("data,tipo,categoria,descricao,valor")
   })
 
-  it("CSV contém os lançamentos", () => {
+  it("CSV contém os lançamentos com tipo e categoria formatados", () => {
     const csv = gerarCSV(UID, "6-2026")
-    expect(csv).toContain("cafe")
-    expect(csv).toContain("freela")
+    expect(csv).toContain("despesa,Mercado,mercado,35.00")
+    expect(csv).toContain("receita,Salário,salario,2500.00")
+  })
+
+  it("CSV não inclui lançamentos de outro usuário", () => {
+    const outro = "outro-csv"
+    criarUsuario(outro)
+    inserirLancamento({ usuarioId: outro, tipo: "gasto", nome: "uber", categoria: "transporte", valor: 99, mes: "6-2026" })
+
+    const csv = gerarCSV(UID, "6-2026")
+
+    expect(csv).toContain("mercado")
+    expect(csv).not.toContain("uber")
+    expect(csv).not.toContain("99.00")
+  })
+
+  it("CSV usa categorias amigáveis", () => {
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "ifood", categoria: "alimentacao", valor: 80, mes: "6-2026" })
+    inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "farmacia", categoria: "farmacia", valor: 40, mes: "6-2026" })
+
+    const csv = gerarCSV(UID, "6-2026")
+
+    expect(csv).toContain("Alimentação")
+    expect(csv).toContain("Farmácia")
   })
 
   it("CSV vazio para mês sem dados", () => {
