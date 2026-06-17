@@ -80,9 +80,13 @@ pm2 save && pm2 startup
 | `BETA_ALLOWED_JIDS` | — | Fallback opcional para JIDs como `@lid`, separados por vírgula |
 | `BETA_ALLOWED_GROUPS` | — | Grupos autorizados, separados por vírgula |
 | `BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT` | true | Em grupo autorizado, exige participante autorizado |
+| `PORT` | 3000 | Alias de deploy para a porta do painel |
 | `PAINEL_PORTA` | 3000 | Porta do painel web |
+| `DASHBOARD_TOKEN` | — | Alias de deploy para token do painel |
 | `PAINEL_TOKEN` | — | Token de acesso ao painel (obrigatório) |
 | `BACKUP_MANTER_DIAS` | 7 | Dias de retenção dos backups |
+| `BACKUP_DIR` | ./database/backups | Pasta de backups locais |
+| `DATABASE_PATH` | ./database/financas.db | Caminho do banco SQLite |
 | `LOG_LEVEL` | info | Nível de log |
 
 ---
@@ -276,22 +280,174 @@ alterar ultimo para 45
 
 ---
 
-## Painel Web
+## Deploy 24/7 Em VPS Com PM2
 
-Acesse: `http://servidor:3000/?token=SEU_TOKEN`
+Fluxo recomendado para rodar o beta fechado fora do PC local:
 
-Endpoints da API:
+```bash
+# 1. Instale Node.js LTS e PM2 no servidor
+npm install -g pm2
 
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/health` | Health check (público) |
-| GET | `/api/stats` | Estatísticas gerais do mês |
-| GET | `/api/usuarios` | Lista de usuários |
-| GET | `/api/lancamentos/:mes` | Lançamentos do mês (ex: `6-2026`) |
-| GET | `/api/exportar/:userId/:mes` | Download CSV |
-| POST | `/api/backup` | Força backup manual |
+# 2. Clone o repositório
+git clone <url-do-repositorio>
+cd bot-v3
 
-Todos os endpoints (exceto `/health`) exigem o header `x-token` ou query param `?token=`.
+# 3. Instale dependências
+npm install
+
+# 4. Crie o .env manualmente
+cp .env.example .env
+nano .env
+
+# 5. Rode migrations e testes
+npm run migrate
+npm test
+
+# 6. Inicie com PM2
+npm run pm2:start
+npm run pm2:logs
+
+# 7. Escaneie o QR Code do WhatsApp se aparecer
+
+# 8. Salve o processo para reiniciar com o servidor
+pm2 save
+pm2 startup
+```
+
+Exemplo mínimo do beta no `.env` do servidor:
+
+```env
+NODE_ENV=production
+BETA_MODE=true
+BETA_BLOCKED_REPLY=false
+BETA_DEBUG=false
+BETA_DEBUG_SHOW_RAW=false
+BETA_ALLOWED_NUMBERS=...
+BETA_ALLOWED_JIDS=...
+BETA_ALLOWED_GROUPS=...
+BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT=true
+DASHBOARD_TOKEN=troque-este-token
+DATABASE_PATH=./database/financas.db
+```
+
+Comandos úteis:
+
+```bash
+npm run pm2:status
+npm run pm2:logs
+npm run pm2:restart
+npm run pm2:stop
+npm run backup
+```
+
+### Persistência
+
+Estas pastas são locais do servidor e não devem ser apagadas em redeploy:
+
+| Pasta | Função |
+|---|---|
+| `auth/` | Sessão do WhatsApp/Baileys. Se apagar, precisa escanear QR Code de novo. |
+| `database/` | Banco SQLite e arquivos auxiliares. |
+| `database/backups/` | Backups manuais/automáticos do banco. |
+| `exports/` | Arquivos CSV/XLSX gerados temporariamente. |
+| `logs/` | Logs locais do PM2/aplicação. |
+
+Em VPS comum, essas pastas persistem enquanto a pasta do projeto não for removida. Em plataformas como Railway/Render, use volume persistente; sem volume, a sessão do WhatsApp e o banco podem ser perdidos.
+
+### Backup
+
+Backup manual:
+
+```bash
+npm run backup
+```
+
+O backup é salvo em `database/backups/` com nome no formato:
+
+```text
+financas-YYYY-MM-DD-HH-mm-ss.db
+```
+
+### Checklist Antes De Liberar Beta
+
+- `npm test` passou.
+- `.env` foi criado no servidor e não foi commitado.
+- `BETA_MODE=true`.
+- `BETA_BLOCKED_REPLY=false`.
+- `BETA_DEBUG=false`.
+- `BETA_DEBUG_SHOW_RAW=false`.
+- Números/JIDs autorizados configurados.
+- Grupo autorizado configurado, se necessário.
+- WhatsApp conectado.
+- PM2 rodando.
+- `npm run backup` testado.
+- Cliente/número não autorizado não recebe resposta.
+- Grupo não autorizado não recebe resposta.
+- Exportação XLSX testada.
+
+---
+
+## Painel Interno/Admin
+
+O painel interno ajuda a acompanhar a operacao do bot localmente ou em beta: status do servico, conexao do WhatsApp, banco, beta fechado, backups e eventos recentes.
+
+Configure um token no `.env` local:
+
+```env
+DASHBOARD_TOKEN=troque-por-um-token-forte
+PORT=3000
+```
+
+Tambem funciona com `PAINEL_TOKEN`, mantido por compatibilidade. Nao use token real no `.env.example` nem no Git.
+
+Acesso local:
+
+```text
+http://localhost:3000/admin?token=SEU_TOKEN
+http://localhost:3000/painel?token=SEU_TOKEN
+http://localhost:3000/dashboard?token=SEU_TOKEN
+```
+
+O painel aceita token por query string em ambiente local/beta e por header:
+
+```text
+Authorization: Bearer SEU_TOKEN
+```
+
+Rotas internas:
+
+| Metodo | Rota | Token | Descricao |
+|---|---|---|---|
+| GET | `/health` | Nao | Health check publico minimo |
+| GET | `/admin` | Sim | Interface visual do painel |
+| GET | `/painel` | Sim | Alias da interface |
+| GET | `/dashboard` | Sim | Alias da interface |
+| GET | `/api/admin/status` | Sim | Status geral, uptime, memoria, bot, banco e beta |
+| GET | `/api/admin/metrics` | Sim | Contagens agregadas do banco e resumo do mes |
+| GET | `/api/admin/beta` | Sim | Configuracoes do beta com valores mascarados |
+| GET | `/api/admin/backups` | Sim | Ultimos backups encontrados |
+| POST | `/api/admin/backup` | Sim | Gera backup manual |
+| GET | `/api/admin/events` | Sim | Eventos recentes em memoria |
+
+Cards principais:
+
+- Servico online/offline.
+- Status do WhatsApp e ultima mensagem processada.
+- Uptime e memoria do processo Node.
+- Status e tamanho aproximado do banco.
+- Total de usuarios, lancamentos, receitas, despesas e metas.
+- Status do beta fechado e quantidades autorizadas.
+- Ultimos backups e botao para gerar backup manual.
+
+Cuidados de seguranca:
+
+- Nao exponha o painel publicamente sem HTTPS, firewall/reverse proxy e token forte.
+- O `/health` fica publico, mas retorna apenas `ok` e `service`.
+- O painel nao mostra `.env`, token, numeros completos, JIDs completos, sessao do WhatsApp ou dados financeiros detalhados de clientes.
+- Em VPS, mantenha `auth/`, `database/`, `database/backups/`, `logs/` e `exports/` fora do Git e com permissao restrita.
+- Para gerar backup manual pelo painel, acesse com token e clique em `Gerar backup agora`; o arquivo fica em `BACKUP_DIR`.
+
+Rotas antigas de suporte interno continuam protegidas por token: `/api/stats`, `/api/usuarios`, `/api/lancamentos/:mes`, `/api/exportar/:userId/:mes` e `/api/backup`.
 
 ---
 
@@ -324,7 +480,7 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 ```
 ├── index.js
 ├── src/
-│   ├── bot.js            ← conexão Baileys, privado, rate limit
+│   ├── bot.js            ← conexão Baileys, privado/grupos autorizados, rate limit
 │   ├── commands.js       ← todos os handlers + dispatcher
 │   ├── database.js       ← SQLite, migrations, queries, CSV
 │   ├── exporters.js      ← geração de CSV e arquivos em exports/
@@ -335,6 +491,7 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 │   ├── rateLimiter.js    ← rate limiting por usuário
 │   ├── config.js         ← configuração centralizada
 │   ├── logger.js         ← logs estruturados
+│   ├── runtimeState.js   ← estado em memória para painel interno
 │   ├── migrations/       ← arquivos SQL de schema
 │   └── web/
 │       └── painel.js     ← painel de administração Express
@@ -343,6 +500,11 @@ O sistema registra quais migrations já foram aplicadas na tabela `_migrations`.
 │   ├── exporters.test.js
 │   ├── formatters.test.js
 │   ├── database.test.js
+│   ├── bot.test.js
+│   ├── config.test.js
+│   ├── commands.test.js
+│   ├── deploy.test.js
+│   ├── painel.test.js
 │   └── rateLimiter.test.js
 ├── scripts/
 │   └── backup.js         ← backup manual

@@ -60,6 +60,22 @@ const entradasCanonicas = {
   entrada:   "entrada",
 }
 
+const palavrasIniciaisNomeInvalido = new Set([
+  "gastei", "paguei", "comprei", "recebi", "entrou", "ganhei", "caiu",
+  "salario", "resumo", "relatorio", "historico", "ajuda", "comandos",
+  "exportar", "baixar", "gerar", "planilha", "meta", "metas",
+  "excluir", "corrigir", "corrige", "alterar", "apagar", "deletar",
+  "entrada", "receita", "xlsx",
+])
+
+const termosFinanceirosNome = new Set([
+  "mercado", "supermercado", "feira", "alimentacao", "alimento",
+  "comida", "restaurante", "delivery", "ifood", "uber", "taxi",
+  "onibus", "transporte", "gasolina", "combustivel", "farmacia",
+  "remedio", "internet", "aluguel", "pix", "freela", "freelance",
+  "bonus", "extra", "poupanca", "caixinha",
+])
+
 function normalizarCategoria(categoria) {
   const valor = normalizarCategoriaInput(categoria)
   const chave = removerAcentos(valor)
@@ -97,6 +113,53 @@ function montarEntrada(nomeRaw, valorRaw) {
  * @param {string} mensagem
  * @returns {{ nome:string, categoria:string, valor:number }|null}
  */
+function extrairNomeDeclarado(texto) {
+  const match = texto.match(/^(?:meu nome (?:é|e)|me chamo|sou|pode me chamar de)\s+(.+)$/iu)
+  return match ? match[1] : texto
+}
+
+function capitalizarNomeUsuario(texto) {
+  return texto
+    .toLocaleLowerCase("pt-BR")
+    .replace(/(^|[\s'.-])(\p{L})/gu, (_, prefixo, letra) => prefixo + letra.toLocaleUpperCase("pt-BR"))
+}
+
+/**
+ * Normaliza um texto para nome de usuário apenas quando ele parece um nome real.
+ * @param {string|null|undefined} nome
+ * @returns {string|null}
+ */
+export function normalizarNomeUsuario(nome) {
+  const bruto = String(nome ?? "").trim().replace(/\s+/g, " ")
+  if (!bruto) return null
+
+  const candidato = extrairNomeDeclarado(bruto).trim().replace(/\s+/g, " ")
+  const chave = removerAcentos(candidato).toLowerCase()
+  const palavras = chave.split(/\s+/).filter(Boolean)
+
+  if (candidato.length < 3 || candidato.length > 50) return null
+  if (/\d/.test(candidato)) return null
+  if (!/^[\p{L}\s'.-]+$/u.test(candidato)) return null
+  if (palavrasIniciaisNomeInvalido.has(palavras[0])) return null
+  if (palavras.some(palavra => termosFinanceirosNome.has(palavra))) return null
+  if (parseAjuda(candidato) || parseExportacao(candidato) ||
+      parseCorrecaoUltimo(candidato) || parseMetaCategoria(candidato) ||
+      parseLancamento(candidato)) {
+    return null
+  }
+
+  return capitalizarNomeUsuario(candidato)
+}
+
+/**
+ * Verifica se um texto pode ser salvo/exibido como nome de usuário.
+ * @param {string|null|undefined} nome
+ * @returns {boolean}
+ */
+export function ehNomeUsuarioValido(nome) {
+  return normalizarNomeUsuario(nome) !== null
+}
+
 export function parseLancamento(mensagem) {
   const texto = normalizarEspacos(mensagem)
   const entradaValorPrimeiro = texto.match(/^(?:recebi|entrou|ganhei|caiu)\s+(\d+(?:[,.]\d{1,2})?)\s+([\p{L}0-9\-_]+)$/u)

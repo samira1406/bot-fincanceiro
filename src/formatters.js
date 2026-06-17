@@ -8,6 +8,8 @@
  * @param {number} valor
  * @returns {string}
  */
+import { normalizarNomeUsuario } from "./validators.js"
+
 export function fmtValor(valor) {
   return Number(valor).toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
@@ -62,6 +64,28 @@ export function fmtCapitalizado(texto) {
  * Mensagem principal de ajuda para usuários beta.
  * @returns {string}
  */
+/**
+ * Retorna um nome seguro para exibição, ou null quando o nome salvo parece comando.
+ * @param {object|string|null|undefined} usuarioOuNome
+ * @returns {string|null}
+ */
+export function obterNomeExibicaoUsuario(usuarioOuNome) {
+  const nome = typeof usuarioOuNome === "string"
+    ? usuarioOuNome
+    : usuarioOuNome?.nome
+  return normalizarNomeUsuario(nome)
+}
+
+/**
+ * Formata o título do resumo mensal sem usar nomes contaminados.
+ * @param {object|string|null|undefined} usuarioOuNome
+ * @returns {string}
+ */
+export function fmtTituloResumo(usuarioOuNome) {
+  const nome = obterNomeExibicaoUsuario(usuarioOuNome)
+  return nome ? `💡 *RESUMO — ${nome.toUpperCase()}*` : "💡 *RESUMO DO MÊS*"
+}
+
 export function fmtAjuda() {
   return `Olá! Eu sou seu assistente financeiro pelo WhatsApp.
 
@@ -127,6 +151,24 @@ recebi 2500 salario
 resumo
 
 Ou mande “ajuda” para ver os comandos.`
+}
+
+/**
+ * Formata a confirmacao de despesa usando apenas os dados do lancamento atual.
+ * @param {{ valor:number, categoria:string }} lancamento
+ * @returns {string}
+ */
+export function fmtConfirmacaoDespesa({ valor, categoria }) {
+  return `Despesa registrada: R$ ${fmtValor(valor)} em ${fmtCategoriaAmigavel(categoria)}.`
+}
+
+/**
+ * Formata a confirmacao de receita usando apenas os dados do lancamento atual.
+ * @param {{ valor:number, categoria:string }} lancamento
+ * @returns {string}
+ */
+export function fmtConfirmacaoReceita({ valor, categoria }) {
+  return `Receita registrada: R$ ${fmtValor(valor)} em ${fmtCategoriaAmigavel(categoria)}.`
 }
 
 /**
@@ -318,9 +360,13 @@ export function fmtRelatorioMensal(nome, entradas, gastos, meta) {
   const totalE = entradas.reduce((s, l) => s + l.valor, 0)
   const totalG = gastos.reduce((s, l) => s + l.valor, 0)
   const saldo  = totalE - totalG
+  const nomeExibicao = obterNomeExibicaoUsuario(nome)
+  const titulo = nomeExibicao
+    ? `📊 *RELATÓRIO MENSAL — ${nomeExibicao.toUpperCase()}*`
+    : "📊 *RESUMO DO MÊS*"
 
   let texto =
-`📊 *RELATÓRIO MENSAL — ${nome.toUpperCase()}*
+`${titulo}
 
 💰 *ENTRADAS*
 ${fmtLista(entradas)}
@@ -355,11 +401,12 @@ export function fmtRelatorioGeral(usuarios) {
   const ranking          = []
 
   for (const { nome, totalE, totalG } of usuarios) {
+    const nomeExibicao = obterNomeExibicaoUsuario(nome) ?? "Usuário"
     const saldo = totalE - totalG
     totalEntradasGeral += totalE
     totalGastosGeral   += totalG
-    ranking.push({ nome, totalG })
-    textoPessoas += `👤 *${nome}*\nEntradas: R$ ${fmtValor(totalE)} | Gastos: R$ ${fmtValor(totalG)} | Saldo: ${fmtSaldo(saldo)}\n\n`
+    ranking.push({ nome: nomeExibicao, totalG })
+    textoPessoas += `👤 *${nomeExibicao}*\nEntradas: R$ ${fmtValor(totalE)} | Gastos: R$ ${fmtValor(totalG)} | Saldo: ${fmtSaldo(saldo)}\n\n`
   }
 
   ranking.sort((a, b) => b.totalG - a.totalG)

@@ -6,7 +6,7 @@ import { createHash } from "crypto"
 import ExcelJS from "exceljs"
 import fs from "fs"
 import { resolve } from "path"
-import { fmtCategoriaAmigavel, fmtTipoLancamento } from "./formatters.js"
+import { fmtCategoriaAmigavel, fmtTipoLancamento, obterNomeExibicaoUsuario } from "./formatters.js"
 
 const CSV_HEADER = "data,tipo,categoria,descricao,valor"
 const XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -175,8 +175,11 @@ function criarAbaResumo(workbook, { usuario, mes, lancamentos, metas }) {
   worksheet.views = [{ showGridLines: false, state: "frozen", ySplit: 2 }]
   aplicarLargurasResumo(worksheet)
 
-  const nomeUsuario = usuario?.nome || "Usuário"
-  estilizarTitulo(worksheet, "A1:E1", `Controle Financeiro - ${nomeUsuario} - ${mesParaTitulo(mes)}`)
+  const nomeUsuario = obterNomeExibicaoUsuario(usuario)
+  const titulo = nomeUsuario
+    ? `Controle Financeiro - ${nomeUsuario} - ${mesParaTitulo(mes)}`
+    : `Controle Financeiro - ${mesParaTitulo(mes)}`
+  estilizarTitulo(worksheet, "A1:E1", titulo)
 
   const totalEntradas = totalPorTipo(lancamentos, "entrada")
   const totalGastos = totalPorTipo(lancamentos, "gasto")
@@ -351,7 +354,7 @@ export async function gerarXlsxFinanceiro({ usuario, usuarioId, mes, lancamentos
   workbook.created = new Date()
   workbook.modified = new Date()
   workbook.subject = "Controle financeiro mensal"
-  workbook.title = `Controle Financeiro - ${usuario?.nome ?? usuarioId}`
+  workbook.title = `Controle Financeiro - ${obterNomeExibicaoUsuario(usuario) ?? mesParaTitulo(mes)}`
 
   criarAbaResumo(workbook, { usuario, mes, lancamentos, metas })
   criarAbaLancamentos(workbook, { mes, lancamentos })
@@ -366,7 +369,7 @@ export async function gerarXlsxFinanceiro({ usuario, usuarioId, mes, lancamentos
  * @returns {string}
  */
 export function gerarNomeArquivoXlsx({ usuarioId, nomeUsuario, mes }) {
-  const slug = slugSeguro(nomeUsuario) || `usuario_${hashUsuario(usuarioId)}`
+  const slug = slugSeguro(obterNomeExibicaoUsuario(nomeUsuario)) || `usuario_${hashUsuario(usuarioId)}`
   return `controle_financeiro_${slug}_${mesParaArquivo(mes)}.xlsx`
 }
 

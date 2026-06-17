@@ -23,7 +23,9 @@ import {
   fmtValor, fmtLista, fmtRelatorioMensal, fmtRelatorioGeral,
   fmtCategorias, fmtSaldo, fmtBarraMeta, fmtHistoricoLancamentos,
   fmtAjuda, fmtBetaFechado, fmtMensagemNaoEntendida,
-  fmtTipoLancamento, fmtCategoriaAmigavel, fmtDescricaoLancamento,
+  fmtTituloResumo, obterNomeExibicaoUsuario,
+  fmtTipoLancamento, fmtCategoriaAmigavel,
+  fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
   fmtListaMetasCategoria, fmtProgressoMetaCategoria,
   fmtMetaCategoriaUltrapassada,
@@ -129,7 +131,7 @@ async function handleResumo(sock, from, usuarioId, nome) {
   const meta   = getMeta(usuarioId)
 
   let texto =
-`💡 *RESUMO — ${nome.toUpperCase()}*
+`${fmtTituloResumo(nome)}
 
 💰 Entradas: R$ ${fmtValor(totalE)}
 💸 Gastos:   R$ ${fmtValor(totalG)}
@@ -379,6 +381,7 @@ async function handleApagarPeriodo(sock, from, usuarioId, nome, periodo) {
  */
 export async function handleRespostaCaixinha(sock, from, usuarioId, nome, mensagem) {
   const lower = mensagem.toLowerCase().trim()
+  const nomeExibicao = obterNomeExibicaoUsuario(nome) ?? "Usuário"
 
   if (lower === "sim") {
     const u     = getUsuario(usuarioId)
@@ -387,17 +390,17 @@ export async function handleRespostaCaixinha(sock, from, usuarioId, nome, mensag
       inserirLancamento({ usuarioId, tipo: "gasto", nome: "caixinha", categoria: "poupanca", valor, mes: mesAtual() })
     }
     atualizarUsuario(usuarioId, { aguardando_caixinha: 0, valor_sugerido_caixinha: 0, estado_expira_em: null })
-    await enviar(sock, from, `💰 *${nome}*, registrei R$ ${fmtValor(valor)} na caixinha. Ótima decisão! 🎉`)
+    await enviar(sock, from, `💰 *${nomeExibicao}*, registrei R$ ${fmtValor(valor)} na caixinha. Ótima decisão! 🎉`)
     return
   }
 
   if (lower === "nao" || lower === "não") {
     atualizarUsuario(usuarioId, { aguardando_caixinha: 0, valor_sugerido_caixinha: 0, estado_expira_em: null })
-    await enviar(sock, from, `👌 *${nome}*, tudo certo. Nada foi guardado na caixinha.`)
+    await enviar(sock, from, `👌 *${nomeExibicao}*, tudo certo. Nada foi guardado na caixinha.`)
     return
   }
 
-  await enviar(sock, from, `❓ *${nome}*, responda apenas *sim* ou *não*.`)
+  await enviar(sock, from, `❓ *${nomeExibicao}*, responda apenas *sim* ou *não*.`)
 }
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
@@ -419,7 +422,8 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   }
 
   const usuario = getUsuario(usuarioId)
-  const nome    = usuario.nome
+  const nomeSalvo = usuario?.nome
+  const nome    = obterNomeExibicaoUsuario(usuario) ?? "Usuário"
   const lower   = mensagem.toLowerCase().trim()
   const partes  = lower.split(/\s+/)
 
@@ -432,8 +436,8 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     "inicio":          () => handleComandos(sock, from),
     "início":          () => handleComandos(sock, from),
     "start":           () => handleComandos(sock, from),
-    "resumo":          () => handleResumo(sock, from, usuarioId, nome),
-    "relatorio":       () => handleRelatorio(sock, from, usuarioId, nome),
+    "resumo":          () => handleResumo(sock, from, usuarioId, nomeSalvo),
+    "relatorio":       () => handleRelatorio(sock, from, usuarioId, nomeSalvo),
     "relatorio geral": () => handleRelatorioGeral(sock, from),
     "categorias":      () => handleCategorias(sock, from, usuarioId, nome),
     "historico":       () => handleHistorico(sock, from, usuarioId, nome),
@@ -519,11 +523,9 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   inserirLancamento({ usuarioId, tipo, nome: nomeLanc, categoria, valor, mes: mesAtual() })
 
   if (tipo === "entrada") {
-    await enviar(sock, from,
-      `💰 *${nome}*, entrada registrada:\n${fmtDescricaoLancamento(nomeLanc)} (${fmtCategoriaAmigavel(categoria)}) — R$ ${fmtValor(valor)}`)
+    await enviar(sock, from, fmtConfirmacaoReceita({ valor, categoria }))
   } else {
-    let texto =
-      `💸 *${nome}*, despesa registrada: R$ ${fmtValor(valor)} em ${fmtCategoriaAmigavel(categoria)}.`
+    let texto = fmtConfirmacaoDespesa({ valor, categoria })
 
     const { mes, ano } = periodoAtual()
     const meta = buscarMetaCategoria(usuarioId, categoria, mes, ano)

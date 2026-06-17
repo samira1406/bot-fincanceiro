@@ -3,7 +3,7 @@
  *
  * Estratégia:
  *  - Usa a API nativa de backup do SQLite (online, sem lock total).
- *  - Salva em ./database/backups/financas-YYYY-MM-DD.db
+ *  - Salva em ./database/backups/financas-YYYY-MM-DD-HH-mm-ss.db
  *  - Mantém apenas os últimos N dias (configurável).
  */
 
@@ -20,8 +20,11 @@ import path       from "path"
 export async function executarBackup() {
   await fs.ensureDir(config.backupDir)
 
-  const hoje    = new Date().toISOString().split("T")[0]   // YYYY-MM-DD
-  const destino = path.join(config.backupDir, `financas-${hoje}.db`)
+  const timestamp = new Date().toISOString()
+    .replace("T", "-")
+    .replace(/\..+$/, "")
+    .replace(/:/g, "-")
+  const destino = path.join(config.backupDir, `financas-${timestamp}.db`)
 
   // Backup online — não bloqueia escritas em andamento
   await db.backup(destino)

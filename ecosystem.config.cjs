@@ -1,8 +1,12 @@
 module.exports = {
   apps: [{
-    name:            "bot-financas",
+    name:            "bot-financas-whatsapp",
     script:          "index.js",
+    instances:       1,
+    exec_mode:       "fork",
     autorestart:     true,
+    watch:           false,
+    max_memory_restart: "500M",
     restart_delay:   5000,
     max_restarts:    5,
     min_uptime:      "15s",

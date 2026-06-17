@@ -15,7 +15,12 @@
     "test:watch": "vitest",
     "test:cover": "vitest run --coverage",
     "migrate": "node migrate.js",
-    "backup": "node scripts/backup.js"
+    "backup": "node scripts/backup.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart bot-financas-whatsapp",
+    "pm2:stop": "pm2 stop bot-financas-whatsapp",
+    "pm2:logs": "pm2 logs bot-financas-whatsapp",
+    "pm2:status": "pm2 status"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.18",

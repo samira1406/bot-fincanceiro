@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from "vitest"
 import {
+  ehNomeUsuarioValido, normalizarNomeUsuario,
   parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
   parseMetaCategoria, parseValorSimples,
 } from "../src/validators.js"
@@ -11,6 +12,33 @@ vi.mock("../src/config.js", () => ({
     palavrasEntrada: ["salario", "freela", "bonus", "pix"],
   },
 }))
+
+describe("nomes de usuário", () => {
+  it.each([
+    "gastei 35 no mercado",
+    "recebi 2500 salario",
+    "exportar planilha",
+    "ajuda",
+    "resumo",
+    "historico",
+    "salario 200",
+  ])("rejeita %s como nome", (mensagem) => {
+    expect(ehNomeUsuarioValido(mensagem)).toBe(false)
+    expect(normalizarNomeUsuario(mensagem)).toBeNull()
+  })
+
+  it("normaliza nome válido", () => {
+    expect(normalizarNomeUsuario("sadu")).toBe("Sadu")
+  })
+
+  it("aceita frase meu nome é", () => {
+    expect(normalizarNomeUsuario("meu nome é Sadu")).toBe("Sadu")
+  })
+
+  it("aceita frase sou", () => {
+    expect(normalizarNomeUsuario("sou Sadu")).toBe("Sadu")
+  })
+})
 
 describe("parseLancamento", () => {
   describe("formato simples: nome valor", () => {

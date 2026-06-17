@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest"
 import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
   fmtAjuda, fmtBetaFechado, fmtBoasVindas, fmtMensagemNaoEntendida,
+  fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
   fmtHistoricoLancamentos,
+  fmtTituloResumo, obterNomeExibicaoUsuario,
   fmtListaMetasCategoria, fmtMetaCategoriaAtualizada,
   fmtMetaCategoriaCriada, fmtMetaCategoriaUltrapassada,
   fmtProgressoMetaCategoria, fmtSemMetasCategoria,
@@ -57,6 +59,35 @@ describe("mensagens de ajuda e onboarding", () => {
 
     expect(texto).toContain("Este bot está em beta fechado")
     expect(texto).toContain("liberar seu número")
+  })
+})
+
+describe("confirmacoes de lancamento", () => {
+  it("formata despesa com dados do lancamento atual", () => {
+    expect(fmtConfirmacaoDespesa({ valor: 10, categoria: "teste" }))
+      .toBe("Despesa registrada: R$ 10,00 em Teste.")
+  })
+
+  it("formata receita com categoria amigavel", () => {
+    expect(fmtConfirmacaoReceita({ valor: 2500, categoria: "salario" }))
+      .toBe("Receita registrada: R$ 2.500,00 em Salário.")
+  })
+})
+
+describe("nome de usuário em mensagens", () => {
+  it("usa fallback no resumo quando o nome salvo é inválido", () => {
+    const titulo = fmtTituloResumo("gastei 35 no mercado")
+
+    expect(titulo).toContain("RESUMO DO MÊS")
+    expect(titulo).not.toContain("GASTEI 35 NO MERCADO")
+  })
+
+  it("mantém nome válido no resumo", () => {
+    expect(fmtTituloResumo("Sadu")).toContain("RESUMO — SADU")
+  })
+
+  it("retorna null para nome contaminado", () => {
+    expect(obterNomeExibicaoUsuario({ nome: "exportar planilha" })).toBeNull()
   })
 })
 
@@ -229,6 +260,13 @@ describe("fmtRelatorioMensal", () => {
   it("contém nome do usuário", () => {
     const { texto } = fmtRelatorioMensal("João", entradas, gastos, null)
     expect(texto).toContain("JOÃO")
+  })
+
+  it("não usa nome inválido no título", () => {
+    const { texto } = fmtRelatorioMensal("gastei 35 no mercado", entradas, gastos, null)
+
+    expect(texto).toContain("RESUMO DO MÊS")
+    expect(texto).not.toContain("GASTEI 35 NO MERCADO")
   })
 
   it("calcula saldo corretamente", () => {

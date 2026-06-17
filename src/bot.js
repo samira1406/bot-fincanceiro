@@ -15,9 +15,15 @@ import { logger, logMensagem }                               from "./logger.js"
 import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
 import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
 import { fmtBetaFechado, fmtBoasVindas }                      from "./formatters.js"
+import { normalizarNomeUsuario }                              from "./validators.js"
 import { iniciarScheduler }                                  from "./scheduler.js"
 import { iniciarPainel }                                     from "./web/painel.js"
 import { verificarRateLimit }                                from "./rateLimiter.js"
+import {
+  atualizarStatusBot,
+  registrarMensagemIgnorada,
+  registrarMensagemProcessada,
+} from "./runtimeState.js"
 
 // ── Estado global ──────────────────────────────────────────────────────────────
 let tentativas   = 0
@@ -137,6 +143,7 @@ export function extrairUsuarioIdMensagem(msg) {
 export async function iniciarBot() {
   if (reconectando) return
   reconectando = true
+  atualizarStatusBot("conectando")
 
   const { state, saveCreds } = await useMultiFileAuthState(config.authPath)
   const { version }          = await fetchLatestBaileysVersion()
@@ -175,6 +182,7 @@ export async function iniciarBot() {
       statusBot.conectado   = true
       statusBot.desde       = new Date().toISOString()
       statusBot.tentativas  = 0
+      atualizarStatusBot("conectado", { em: statusBot.desde })
       logger.info("✅ Bot conectado!")
       iniciarScheduler(sock)
     }
@@ -183,6 +191,7 @@ export async function iniciarBot() {
       statusBot.conectado = false
       const code   = lastDisconnect?.error?.output?.statusCode
       const motivo = lastDisconnect?.error?.message ?? "desconhecido"
+      atualizarStatusBot("desconectado", { code, erro: motivo })
       logger.warn({ code, motivo }, "Conexão encerrada")
 
       if (code === DisconnectReason.loggedOut) {
@@ -222,6 +231,7 @@ export async function iniciarBot() {
     const participant = msg.key.participant || msg.participant
 
     if (msg.key.fromMe) {
+      registrarMensagemIgnorada("fromMe", { remoto: from })
       logBetaDebug({
         grupo: isJidGrupo(from),
         fromMe: true,
@@ -255,6 +265,7 @@ export async function iniciarBot() {
       const grupo = isJidGrupo(from)
       const grupoAutorizado = grupoAutorizadoBeta(from)
       if (grupo && !grupoAutorizado) {
+        registrarMensagemIgnorada("grupo", { grupo: from })
         logBetaDebug({
           grupo: true,
           grupoAutorizado,
@@ -275,6 +286,7 @@ export async function iniciarBot() {
         : autorizado
 
       if (grupo && !participanteAutorizado) {
+        registrarMensagemIgnorada("beta", { grupo: from, participante })
         logBetaDebug({
           grupo: true,
           grupoAutorizado,
@@ -294,6 +306,7 @@ export async function iniciarBot() {
       }
 
       if (!autorizado && (!grupo || exigeParticipante)) {
+        registrarMensagemIgnorada("beta", { remetente: remetente.bruto, grupo: grupo ? from : "" })
         logBetaDebug({
           grupo: false,
           fromMe: false,
@@ -345,18 +358,44 @@ export async function iniciarBot() {
       // ── Novo usuário ──────────────────────────────────────────────────────
       if (!usuario) {
         criarUsuario(usuarioId)
-        atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
-        await enviar(sock, from,
-          `${fmtBoasVindas()}\n\nAntes de começar, como você quer ser chamado(a)?`)
+        const nomeInicial = normalizarNomeUsuario(mensagem)
+        if (nomeInicial) {
+          atualizarUsuario(usuarioId, {
+            nome: nomeInicial,
+            aguardando_nome: 0,
+            ultimo_msg_id: messageId,
+          })
+          await enviar(sock, from,
+            `✅ Perfeito! Vou te chamar de *${nomeInicial}*.\n\nMande *ajuda* para ver todos os comandos.`)
+          return
+        }
+
+        atualizarUsuario(usuarioId, { aguardando_nome: 0, ultimo_msg_id: messageId })
+        await enviar(sock, from, fmtBoasVindas())
+        logMensagem(usuarioId, mensagem.split(" ")[0])
+        registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
+        await processarMensagem(sock, from, usuarioId, mensagem, {
+          pularBeta: grupo && !exigeParticipante,
+        })
         return
       }
 
       // ── Aguardando nome ───────────────────────────────────────────────────
       if (usuario.aguardando_nome) {
-        const nome = mensagem.trim().slice(0, 50)   // limita tamanho do nome
-        atualizarUsuario(usuarioId, { nome, aguardando_nome: 0 })
-        await enviar(sock, from,
-          `✅ Perfeito! Vou te chamar de *${nome}*.\n\nMande *ajuda* para ver todos os comandos.`)
+        const nome = normalizarNomeUsuario(mensagem)
+        if (nome) {
+          atualizarUsuario(usuarioId, { nome, aguardando_nome: 0 })
+          await enviar(sock, from,
+            `✅ Perfeito! Vou te chamar de *${nome}*.\n\nMande *ajuda* para ver todos os comandos.`)
+          return
+        }
+
+        atualizarUsuario(usuarioId, { nome: null, aguardando_nome: 0 })
+        logMensagem(usuarioId, mensagem.split(" ")[0])
+        registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
+        await processarMensagem(sock, from, usuarioId, mensagem, {
+          pularBeta: grupo && !exigeParticipante,
+        })
         return
       }
 
@@ -372,11 +411,13 @@ export async function iniciarBot() {
 
       // ── Comandos e lançamentos ────────────────────────────────────────────
       logMensagem(usuarioId, mensagem.split(" ")[0])
+      registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
       await processarMensagem(sock, from, usuarioId, mensagem, {
         pularBeta: grupo && !exigeParticipante,
       })
 
     } catch (err) {
+      atualizarStatusBot(statusBot.conectado ? "conectado" : "desconectado", { erro: err.message })
       logger.error({ err: err.message, usuarioId: mascararNumeroBeta(usuarioId) }, "Erro ao processar mensagem")
     }
   })

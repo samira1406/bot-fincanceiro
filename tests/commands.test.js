@@ -92,7 +92,7 @@ describe("processarMensagem - beta fechado", () => {
 
     await processarMensagem(sock, "grupo", "5511999999999", "gastei 35 no mercado")
 
-    expect(ultimaResposta()).toContain("despesa registrada")
+    expect(ultimaResposta()).toContain("Despesa registrada")
     expect(getUltimoLancamento("5511999999999").valor).toBe(35)
   })
 
@@ -102,7 +102,7 @@ describe("processarMensagem - beta fechado", () => {
 
     await processarMensagem(sock, "grupo", "5511999999999", "recebi 2500 salario")
 
-    expect(ultimaResposta()).toContain("entrada registrada")
+    expect(ultimaResposta()).toContain("Receita registrada")
     expect(getUltimoLancamento("5511999999999").tipo).toBe("entrada")
   })
 
@@ -142,7 +142,7 @@ describe("processarMensagem - beta fechado", () => {
 
     await processarMensagem(sock, "grupo", usuarioId, "gastei 35 no mercado")
 
-    expect(ultimaResposta()).toContain("despesa registrada")
+    expect(ultimaResposta()).toContain("Despesa registrada")
     expect(getUltimoLancamento(usuarioId).categoria).toBe("mercado")
   })
 
@@ -185,6 +185,31 @@ describe("processarMensagem - ajuda e onboarding", () => {
     expect(ultimaResposta()).toContain("Não consegui entender essa mensagem")
     expect(ultimaResposta()).toContain("recebi 2500 salario")
     expect(ultimaResposta()).toContain("ajuda")
+  })
+})
+
+describe("processarMensagem - resumo com nome seguro", () => {
+  it("usa fallback quando o nome salvo parece lançamento", async () => {
+    criarUsuario("user-contaminado")
+    atualizarUsuario("user-contaminado", { nome: "gastei 35 no mercado", aguardando_nome: 0 })
+    inserirLancamento({ usuarioId: "user-contaminado", tipo: "entrada", nome: "salario", categoria: "salario", valor: 7000, mes: mesAtual() })
+    inserirLancamento({ usuarioId: "user-contaminado", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-contaminado", "resumo")
+
+    expect(ultimaResposta()).toContain("RESUMO DO MÊS")
+    expect(ultimaResposta()).not.toContain("GASTEI 35 NO MERCADO")
+    expect(ultimaResposta()).toContain("Entradas: R$ 7.000,00")
+    expect(ultimaResposta()).toContain("Gastos:   R$ 35,00")
+  })
+
+  it("mantém nome válido no resumo", async () => {
+    criarUsuario("user-sadu")
+    atualizarUsuario("user-sadu", { nome: "Sadu", aguardando_nome: 0 })
+
+    await processarMensagem(sock, "grupo", "user-sadu", "resumo")
+
+    expect(ultimaResposta()).toContain("RESUMO — SADU")
   })
 })
 
@@ -238,7 +263,7 @@ describe("processarMensagem - receitas naturais", () => {
     await processarMensagem(sock, "grupo", "user-a", mensagem)
 
     const ultimo = getUltimoLancamento("user-a")
-    expect(ultimaResposta()).toContain("entrada registrada")
+    expect(ultimaResposta()).toContain("Receita registrada")
     expect(ultimaResposta()).toContain(categoriaEsperada)
     expect(ultimo.tipo).toBe("entrada")
   })
@@ -248,7 +273,7 @@ describe("processarMensagem - receitas naturais", () => {
 
     await processarMensagem(sock, "grupo", "user-a", "gastei 35 no mercado")
 
-    expect(ultimaResposta()).toContain("despesa registrada")
+    expect(ultimaResposta()).toContain("Despesa registrada")
     expect(getUltimoLancamento("user-a").tipo).toBe("gasto")
   })
 
@@ -263,6 +288,45 @@ describe("processarMensagem - receitas naturais", () => {
     expect(getSomaPorTipo("user-a", "gasto", mesAtual())).toBe(35)
     expect(ultimaResposta()).toContain("Entradas: R$ 2.500,00")
     expect(ultimaResposta()).toContain("Gastos:   R$ 35,00")
+  })
+})
+
+describe("processarMensagem - confirmacao de lancamento atual", () => {
+  it("confirma gastei 10 no teste com valor e categoria atuais", async () => {
+    prepararUsuario("user-confirmacao")
+
+    await processarMensagem(sock, "grupo", "user-confirmacao", "gastei 10 no teste")
+
+    expect(ultimaResposta()).toBe("Despesa registrada: R$ 10,00 em Teste.")
+    expect(ultimaResposta()).not.toContain("Gastei 35 no mercado")
+  })
+
+  it("confirma gastei 35 no mercado com valor e categoria atuais", async () => {
+    prepararUsuario("user-confirmacao")
+
+    await processarMensagem(sock, "grupo", "user-confirmacao", "gastei 35 no mercado")
+
+    expect(ultimaResposta()).toBe("Despesa registrada: R$ 35,00 em Mercado.")
+  })
+
+  it("nao contamina a segunda resposta com lancamento anterior", async () => {
+    prepararUsuario("user-confirmacao")
+
+    await processarMensagem(sock, "grupo", "user-confirmacao", "gastei 35 no mercado")
+    await processarMensagem(sock, "grupo", "user-confirmacao", "gastei 10 no teste")
+
+    expect(ultimaResposta()).toBe("Despesa registrada: R$ 10,00 em Teste.")
+    expect(ultimaResposta()).not.toContain("Mercado")
+    expect(ultimaResposta()).not.toContain("35")
+  })
+
+  it("mantem receita natural como receita", async () => {
+    prepararUsuario("user-confirmacao")
+
+    await processarMensagem(sock, "grupo", "user-confirmacao", "recebi 2500 salario")
+
+    expect(ultimaResposta()).toBe("Receita registrada: R$ 2.500,00 em Salário.")
+    expect(getUltimoLancamento("user-confirmacao").tipo).toBe("entrada")
   })
 })
 
@@ -433,7 +497,7 @@ describe("processarMensagem - metas por categoria", () => {
 
     await processarMensagem(sock, "grupo", "user-a", "gastei 50 no mercado")
 
-    expect(ultimaResposta()).toContain("despesa registrada")
+    expect(ultimaResposta()).toContain("Despesa registrada")
     expect(ultimaResposta()).toContain("em Mercado")
     expect(ultimaResposta()).toContain("Você já usou R$ 420,00")
     expect(ultimaResposta()).toContain("Ainda restam R$ 180,00")

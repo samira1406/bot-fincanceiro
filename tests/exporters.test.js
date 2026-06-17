@@ -109,6 +109,19 @@ describe("exportação XLSX", () => {
     expect(resumo.getCell("B6").value).toBe(2465)
   })
 
+  it("aba Resumo usa fallback quando nome do usuário é inválido", async () => {
+    const workbook = await carregarWorkbook(await gerarXlsxFinanceiro({
+      usuario: { nome: "gastei 35 no mercado" },
+      usuarioId: "user-a",
+      mes: "6-2026",
+      lancamentos,
+    }))
+    const resumo = workbook.getWorksheet("Resumo")
+
+    expect(resumo.getCell("A1").value).toBe("Controle Financeiro - Junho/2026")
+    expect(resumo.getCell("A1").value).not.toContain("gastei 35 no mercado")
+  })
+
   it("aba Lancamentos contém cabeçalhos corretos", async () => {
     const workbook = await carregarWorkbook(await gerarXlsxFinanceiro({
       usuario: { nome: "Sadu" },
@@ -199,6 +212,18 @@ describe("exportação XLSX", () => {
 
     expect(nome).toMatch(/^controle_financeiro_usuario_[a-f0-9]{8}_2026-06\.xlsx$/)
     expect(nome).not.toContain("5511999999999")
+  })
+
+  it("usa hash quando o nome do usuário parece comando ou lançamento", () => {
+    const nome = gerarNomeArquivoXlsx({
+      usuarioId: "5511999999999@s.whatsapp.net",
+      nomeUsuario: "gastei 35 no mercado",
+      mes: "6-2026",
+    })
+
+    expect(nome).toMatch(/^controle_financeiro_usuario_[a-f0-9]{8}_2026-06\.xlsx$/)
+    expect(nome).not.toContain("gastei")
+    expect(nome).not.toContain("mercado")
   })
 
   it("salva XLSX em exports", async () => {

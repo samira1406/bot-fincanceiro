@@ -244,6 +244,82 @@ describe("bot - conversas privadas e grupos", () => {
     expect(usuarioId).toBe("5515999999999")
   })
 
+  it("primeira mensagem de gasto não é salva como nome do usuário", async () => {
+    await entregarMensagem({
+      remoteJid: "5515000000001@s.whatsapp.net",
+      texto: "gastei 35 no mercado",
+    })
+
+    const usuario = getUsuario("5515000000001")
+    expect(usuario.nome).toBeNull()
+    expect(usuario.aguardando_nome).toBe(0)
+    expect(getUltimoLancamento("5515000000001").valor).toBe(35)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toBe("Despesa registrada: R$ 35,00 em Mercado.")
+  })
+
+  it("primeira mensagem ajuda não é salva como nome", async () => {
+    await entregarMensagem({
+      remoteJid: "5515000000002@s.whatsapp.net",
+      texto: "ajuda",
+    })
+
+    const usuario = getUsuario("5515000000002")
+    expect(usuario.nome).toBeNull()
+    expect(usuario.aguardando_nome).toBe(0)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("assistente financeiro")
+  })
+
+  it("primeira mensagem resumo não é salva como nome", async () => {
+    await entregarMensagem({
+      remoteJid: "5515000000003@s.whatsapp.net",
+      texto: "resumo",
+    })
+
+    const usuario = getUsuario("5515000000003")
+    expect(usuario.nome).toBeNull()
+    expect(usuario.aguardando_nome).toBe(0)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("RESUMO DO MÊS")
+  })
+
+  it("primeira mensagem exportar planilha não é salva como nome", async () => {
+    await entregarMensagem({
+      remoteJid: "5515000000004@s.whatsapp.net",
+      texto: "exportar planilha",
+    })
+
+    const usuario = getUsuario("5515000000004")
+    expect(usuario.nome).toBeNull()
+    expect(usuario.aguardando_nome).toBe(0)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Você ainda não tem lançamentos para exportar")
+  })
+
+  it("aceita nome válido declarado no primeiro contato", async () => {
+    await entregarMensagem({
+      remoteJid: "5515000000005@s.whatsapp.net",
+      texto: "meu nome é Sadu",
+    })
+
+    const usuario = getUsuario("5515000000005")
+    expect(usuario.nome).toBe("Sadu")
+    expect(usuario.aguardando_nome).toBe(0)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Sadu")
+  })
+
+  it("mensagem financeira enquanto aguarda nome não contamina cadastro", async () => {
+    criarUsuario("5515000000006")
+
+    await entregarMensagem({
+      remoteJid: "5515000000006@s.whatsapp.net",
+      texto: "gastei 12,50 no mercado",
+    })
+
+    const usuario = getUsuario("5515000000006")
+    expect(usuario.nome).toBeNull()
+    expect(usuario.aguardando_nome).toBe(0)
+    expect(getUltimoLancamento("5515000000006").valor).toBe(12.5)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toBe("Despesa registrada: R$ 12,50 em Mercado.")
+  })
+
   it("prefere participante com telefone quando remoteJid privado vem como @lid", () => {
     const remetente = extrairIdentificadorRemetente({
       key: {
@@ -266,7 +342,7 @@ describe("bot - conversas privadas e grupos", () => {
     })
 
     expect(botMock.sendMessage).toHaveBeenCalled()
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515999999999").valor).toBe(35)
   })
 
@@ -286,7 +362,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("contato-ficticio@lid").valor).toBe(35)
   })
 
@@ -299,7 +375,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515999999999").categoria).toBe("mercado")
   })
 
@@ -312,7 +388,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("15999999999").valor).toBe(35)
   })
 
@@ -325,7 +401,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515999999999").valor).toBe(35)
   })
 
@@ -345,7 +421,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515999999999").valor).toBe(35)
   })
 
@@ -396,7 +472,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515888888888").valor).toBe(35)
   })
 
@@ -409,7 +485,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515888888888").valor).toBe(35)
   })
 
@@ -444,7 +520,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515999999999").valor).toBe(35)
   })
 
@@ -465,7 +541,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("participante-ficticio@lid").valor).toBe(35)
   })
 
@@ -507,7 +583,7 @@ describe("bot - conversas privadas e grupos", () => {
       texto: "gastei 35 no mercado",
     })
 
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("despesa registrada")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Despesa registrada")
     expect(getUltimoLancamento("5515888888888").valor).toBe(35)
   })
 

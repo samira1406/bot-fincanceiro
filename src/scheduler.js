@@ -2,7 +2,7 @@ import cron from "node-cron"
 import { config }           from "./config.js"
 import { logger }           from "./logger.js"
 import { getTodosUsuarios, getLancamentosPorMes, getMeta, getSomaPorTipo, mesAtual } from "./database.js"
-import { fmtRelatorioMensal } from "./formatters.js"
+import { fmtRelatorioMensal, obterNomeExibicaoUsuario } from "./formatters.js"
 import { enviar }             from "./commands.js"
 import { executarBackup }     from "./backup.js"
 
@@ -28,9 +28,10 @@ export function iniciarScheduler(sock) {
         const entradas = todos.filter(l => l.tipo === "entrada")
         const gastos   = todos.filter(l => l.tipo === "gasto")
         const meta     = getMeta(u.id)
-        const { texto } = fmtRelatorioMensal(u.nome, entradas, gastos, meta)
+        const nome = obterNomeExibicaoUsuario(u) ?? "Usuário"
+        const { texto } = fmtRelatorioMensal(nome, entradas, gastos, meta)
         await enviar(sockRef, config.grupoPermitido,
-          `📅 *LEMBRETE — Fim do mês, ${u.nome}!*\n\n${texto}`)
+          `📅 *LEMBRETE — Fim do mês, ${nome}!*\n\n${texto}`)
       } catch (err) {
         logger.error({ err: err.message, usuario: u.id }, "Erro no lembrete mensal")
       }
@@ -48,8 +49,9 @@ export function iniciarScheduler(sock) {
         const totalG = getSomaPorTipo(u.id, "gasto", mes)
         const pct    = Math.round((totalG / meta) * 100)
         if (pct < 50) continue
+        const nome = obterNomeExibicaoUsuario(u) ?? "Usuário"
         await enviar(sockRef, config.grupoPermitido,
-          `🎯 *${u.nome}*, você já usou *${pct}%* da meta mensal (R$ ${meta.toFixed(2)}).`)
+          `🎯 *${nome}*, você já usou *${pct}%* da meta mensal (R$ ${meta.toFixed(2)}).`)
       } catch (err) {
         logger.error({ err: err.message }, "Erro no alerta semanal de meta")
       }

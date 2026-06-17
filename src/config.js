@@ -24,6 +24,15 @@ function boolEnv(env, key, fallback = false) {
   return ["true", "1", "sim", "yes"].includes(val.trim().toLowerCase())
 }
 
+function firstEnv(env, keys, fallback) {
+  for (const key of keys) {
+    const val = env[key]
+    if (val !== undefined && val !== "") return val
+  }
+  if (fallback !== undefined) return fallback
+  throw new Error(`Variável de ambiente obrigatória não definida: ${keys.join(" ou ")}`)
+}
+
 export function normalizarNumeroWhatsApp(valor) {
   const base = String(valor ?? "").split("@")[0].split(":")[0]
   return base.replace(/\D/g, "")
@@ -155,8 +164,8 @@ export function carregarConfig(env = process.env) {
 
     // Painel web
     painel: {
-      porta: Number(requireEnv(env, "PAINEL_PORTA", "3000")),
-      token: requireEnv(env, "PAINEL_TOKEN", "dev-token-inseguro"),
+      porta: Number(firstEnv(env, ["PAINEL_PORTA", "PORT"], "3000")),
+      token: firstEnv(env, ["PAINEL_TOKEN", "DASHBOARD_TOKEN"], "dev-token-inseguro"),
     },
 
     // Backup
@@ -171,8 +180,8 @@ export function carregarConfig(env = process.env) {
     },
 
     // Paths
-    dbPath:     "./database/financas.db",
-    backupDir:  "./database/backups",
+    dbPath:     requireEnv(env, "DATABASE_PATH", "./database/financas.db"),
+    backupDir:  requireEnv(env, "BACKUP_DIR", "./database/backups"),
     authPath:   "./auth",
 
     // Logs

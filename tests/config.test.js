@@ -50,6 +50,20 @@ describe("config - beta fechado", () => {
     expect(usuarioAutorizadoBeta("5511999999999", config.beta)).toBe(true)
   })
 
+  it("lê aliases de deploy para porta, token, banco e backup", () => {
+    const config = carregarConfig({
+      PORT: "4000",
+      DASHBOARD_TOKEN: "token-ficticio",
+      DATABASE_PATH: "./database/producao.db",
+      BACKUP_DIR: "./database/backups-producao",
+    })
+
+    expect(config.painel.porta).toBe(4000)
+    expect(config.painel.token).toBe("token-ficticio")
+    expect(config.dbPath).toBe("./database/producao.db")
+    expect(config.backupDir).toBe("./database/backups-producao")
+  })
+
   it("permite qualquer usuário quando BETA_MODE=false", () => {
     const config = carregarConfig({
       BETA_MODE: "false",
