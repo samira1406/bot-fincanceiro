@@ -54,6 +54,10 @@ const {
   criarOuAtualizarMetaCategoria,
   getSomaPorTipo, getUltimoLancamento, getUsuario, mesAtual, db,
 } = await import("../src/database.js")
+const {
+  obterPendenciaLancamento,
+  resetPendenciasLancamentoParaTestes,
+} = await import("../src/pendingLancamentos.js")
 
 let sock
 
@@ -76,6 +80,7 @@ function periodoAtualTeste() {
 }
 
 beforeEach(() => {
+  resetPendenciasLancamentoParaTestes()
   db.exec(`
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
@@ -131,7 +136,7 @@ describe("processarMensagem - beta fechado", () => {
 
     await processarMensagem(sock, "grupo", "5511999999999", "ajuda")
 
-    expect(ultimaResposta()).toContain("assistente financeiro")
+    expect(ultimaResposta()).toContain("MENU DO BOT FINANÇAS")
     expect(ultimaResposta()).toContain("gastei 35 no mercado")
   })
 
@@ -172,7 +177,9 @@ describe("processarMensagem - ajuda e onboarding", () => {
 
     await processarMensagem(sock, "grupo", "user-a", mensagem)
 
-    expect(ultimaResposta()).toContain("assistente financeiro")
+    expect(ultimaResposta()).toContain("MENU DO BOT FINANÇAS")
+    expect(ultimaResposta()).toContain("1.")
+    expect(ultimaResposta()).toContain("7.")
     expect(ultimaResposta()).toContain("gastei 35 no mercado")
     expect(ultimaResposta()).toContain("exportar planilha")
   })
@@ -185,6 +192,226 @@ describe("processarMensagem - ajuda e onboarding", () => {
     expect(ultimaResposta()).toContain("Não consegui entender essa mensagem")
     expect(ultimaResposta()).toContain("recebi 2500 salario")
     expect(ultimaResposta()).toContain("ajuda")
+  })
+})
+
+describe("processarMensagem - aliases e valor ambíguo", () => {
+  it.each([
+    "saldo",
+    "meu resumo",
+    "resumo do mes",
+    "resumo do mês",
+  ])("usa %s como resumo", async (mensagem) => {
+    prepararUsuario("user-alias-resumo")
+
+    await processarMensagem(sock, "grupo", "user-alias-resumo", mensagem)
+
+    expect(ultimaResposta()).toContain("RESUMO")
+    expect(ultimaResposta()).toContain("Saldo")
+  })
+
+  it.each([
+    "extrato",
+    "ultimos",
+    "últimos",
+    "lancamentos",
+    "lançamentos",
+  ])("usa %s como histórico", async (mensagem) => {
+    prepararUsuario("user-alias-historico")
+    inserirLancamento({ usuarioId: "user-alias-historico", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-alias-historico", mensagem)
+
+    expect(ultimaResposta()).toContain("Últimos lançamentos")
+    expect(ultimaResposta()).toContain("Mercado")
+  })
+
+  it("não registra valor sozinho e pede o tipo", async () => {
+    prepararUsuario("user-ambiguo")
+
+    await processarMensagem(sock, "grupo", "user-ambiguo", "1250")
+
+    expect(getUltimoLancamento("user-ambiguo")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-ambiguo")).toMatchObject({
+      etapa: "tipo",
+      valor: 1250,
+      tipo: null,
+    })
+    expect(ultimaResposta()).toContain("R$ 1.250,00")
+    expect(ultimaResposta()).toContain("1 - Entrada")
+    expect(ultimaResposta()).toContain("2 - Gasto")
+  })
+
+  it("prioriza 2 como tipo da pendência e não como R$ 2,00", async () => {
+    prepararUsuario("user-tipo-gasto")
+
+    await processarMensagem(sock, "grupo", "user-tipo-gasto", "1250")
+    await processarMensagem(sock, "grupo", "user-tipo-gasto", "2")
+
+    expect(getUltimoLancamento("user-tipo-gasto")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-tipo-gasto")).toMatchObject({
+      etapa: "categoria",
+      valor: 1250,
+      tipo: "gasto",
+    })
+    expect(ultimaResposta()).toContain("vou registrar como gasto")
+    expect(ultimaResposta()).toContain("categoria ou descrição")
+    expect(ultimaResposta()).not.toContain("R$ 2,00")
+  })
+
+  it("registra despesa com o valor original após 1250 + 2 + mercado", async () => {
+    prepararUsuario("user-fluxo-gasto")
+
+    await processarMensagem(sock, "grupo", "user-fluxo-gasto", "1250")
+    await processarMensagem(sock, "grupo", "user-fluxo-gasto", "2")
+    await processarMensagem(sock, "grupo", "user-fluxo-gasto", "mercado")
+
+    expect(getUltimoLancamento("user-fluxo-gasto")).toMatchObject({
+      tipo: "gasto",
+      valor: 1250,
+      categoria: "mercado",
+      nome: "mercado",
+    })
+    expect(ultimaResposta()).toBe("Despesa registrada: R$ 1.250,00 em Mercado.")
+    expect(obterPendenciaLancamento("grupo", "user-fluxo-gasto")).toBeNull()
+  })
+
+  it("registra receita com o valor original após 1250 + 1 + freelance", async () => {
+    prepararUsuario("user-fluxo-entrada")
+
+    await processarMensagem(sock, "grupo", "user-fluxo-entrada", "1250")
+    await processarMensagem(sock, "grupo", "user-fluxo-entrada", "1")
+    await processarMensagem(sock, "grupo", "user-fluxo-entrada", "freelance")
+
+    expect(getUltimoLancamento("user-fluxo-entrada")).toMatchObject({
+      tipo: "entrada",
+      valor: 1250,
+      categoria: "freelance",
+      nome: "freelance",
+    })
+    expect(ultimaResposta()).toBe("Receita registrada: R$ 1.250,00 em Freelance.")
+    expect(obterPendenciaLancamento("grupo", "user-fluxo-entrada")).toBeNull()
+  })
+
+  it.each([
+    "cancelar",
+    "cancela",
+    "sair",
+    "voltar",
+  ])("%s cancela a pendência sem registrar", async (mensagem) => {
+    const usuarioId = `user-cancelar-${mensagem}`
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, "1250")
+    await processarMensagem(sock, "grupo", usuarioId, mensagem)
+
+    expect(getUltimoLancamento(usuarioId)).toBeNull()
+    expect(obterPendenciaLancamento("grupo", usuarioId)).toBeNull()
+    expect(ultimaResposta()).toContain("cancelei esse lançamento")
+    expect(ultimaResposta()).toContain("Nenhum valor foi registrado")
+  })
+
+  it.each([
+    "resumo",
+    "ajuda",
+    "planilha",
+    "extrato",
+  ])("comando %s não vira categoria e preserva a pendência", async (comando) => {
+    const usuarioId = `user-comando-${comando}`
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, "1250")
+    await processarMensagem(sock, "grupo", usuarioId, "2")
+    await processarMensagem(sock, "grupo", usuarioId, comando)
+
+    expect(getUltimoLancamento(usuarioId)).toBeNull()
+    expect(obterPendenciaLancamento("grupo", usuarioId)).toMatchObject({
+      etapa: "categoria",
+      valor: 1250,
+      tipo: "gasto",
+    })
+
+    await processarMensagem(sock, "grupo", usuarioId, "mercado")
+    expect(getUltimoLancamento(usuarioId)).toMatchObject({
+      tipo: "gasto",
+      valor: 1250,
+      categoria: "mercado",
+    })
+  })
+
+  it.each([
+    "1",
+    "entrada",
+    "receita",
+    "recebido",
+    "ganho",
+  ])("aceita %s como entrada durante a pendência", async (respostaTipo) => {
+    const usuarioId = `user-entrada-${respostaTipo}`
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, "1250")
+    await processarMensagem(sock, "grupo", usuarioId, respostaTipo)
+    await processarMensagem(sock, "grupo", usuarioId, "freelance")
+
+    expect(getUltimoLancamento(usuarioId)).toMatchObject({
+      tipo: "entrada",
+      valor: 1250,
+      categoria: "freelance",
+    })
+  })
+
+  it.each([
+    "2",
+    "gasto",
+    "despesa",
+    "saida",
+    "saída",
+    "pago",
+  ])("aceita %s como gasto durante a pendência", async (respostaTipo) => {
+    const usuarioId = `user-gasto-${respostaTipo}`
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, "1250")
+    await processarMensagem(sock, "grupo", usuarioId, respostaTipo)
+    await processarMensagem(sock, "grupo", usuarioId, "mercado")
+
+    expect(getUltimoLancamento(usuarioId)).toMatchObject({
+      tipo: "gasto",
+      valor: 1250,
+      categoria: "mercado",
+    })
+  })
+
+  it("isola a pendência entre usuários", async () => {
+    prepararUsuario("user-pendente-a")
+    prepararUsuario("user-pendente-b")
+
+    await processarMensagem(sock, "grupo", "user-pendente-a", "1250")
+    await processarMensagem(sock, "grupo", "user-pendente-b", "mercado 10")
+
+    expect(getUltimoLancamento("user-pendente-b")).toMatchObject({
+      tipo: "gasto",
+      valor: 10,
+      categoria: "mercado",
+    })
+    expect(obterPendenciaLancamento("outro-chat", "user-pendente-a")).toMatchObject({
+      etapa: "tipo",
+      valor: 1250,
+    })
+    expect(obterPendenciaLancamento("grupo", "user-pendente-b")).toBeNull()
+  })
+
+  it.each([
+    "oi",
+    "ajuda",
+    "resumo",
+    "planilha",
+  ])("não transforma %s em lançamento", async (mensagem) => {
+    prepararUsuario("user-seguranca-parser")
+
+    await processarMensagem(sock, "grupo", "user-seguranca-parser", mensagem)
+
+    expect(getUltimoLancamento("user-seguranca-parser")).toBeNull()
   })
 })
 
@@ -250,7 +477,7 @@ describe("processarMensagem - receitas naturais", () => {
     ["recebi 2500 salario", "Salário"],
     ["recebi 2500 salário", "Salário"],
     ["entrou 500 pix", "Pix"],
-    ["ganhei 1200 freelance", "Freela"],
+    ["ganhei 1200 freelance", "Freelance"],
     ["caiu 2500 salario", "Salário"],
     ["caiu salario 2500", "Salário"],
     ["salario 2500", "Salário"],
@@ -268,6 +495,27 @@ describe("processarMensagem - receitas naturais", () => {
     expect(ultimo.tipo).toBe("entrada")
   })
 
+  it.each([
+    ["recebi 1250 em comissionamento", "Comissionamento"],
+    ["Recebi 1250 em free", "Free"],
+    ["recebi 1250 em freelance", "Freelance"],
+    ["recebi 1250 de comissionamento", "Comissionamento"],
+    ["recebi 1250 por consultoria", "Consultoria"],
+    ["recebi 1250 referente a freela", "Freela"],
+    ["comissao 1250", "Comissão"],
+    ["comissão 1250", "Comissão"],
+    ["pix 200", "Pix"],
+  ])("registra receita natural %s", async (mensagem, categoriaEsperada) => {
+    prepararUsuario("user-receita-natural")
+
+    await processarMensagem(sock, "grupo", "user-receita-natural", mensagem)
+
+    const ultimo = getUltimoLancamento("user-receita-natural")
+    expect(ultimaResposta()).toContain("Receita registrada")
+    expect(ultimaResposta()).toContain(categoriaEsperada)
+    expect(ultimo.tipo).toBe("entrada")
+  })
+
   it("mantém despesas antigas como despesa", async () => {
     prepararUsuario("user-a")
 
@@ -275,6 +523,23 @@ describe("processarMensagem - receitas naturais", () => {
 
     expect(ultimaResposta()).toContain("Despesa registrada")
     expect(getUltimoLancamento("user-a").tipo).toBe("gasto")
+  })
+
+  it.each([
+    ["paguei 50 internet", "Internet", 50],
+    ["comprei 20 padaria", "Padaria", 20],
+    ["despesa 20 padaria", "Padaria", 20],
+    ["saida 20 padaria", "Padaria", 20],
+  ])("registra despesa natural %s", async (mensagem, categoriaEsperada, valor) => {
+    prepararUsuario("user-despesa-natural")
+
+    await processarMensagem(sock, "grupo", "user-despesa-natural", mensagem)
+
+    const ultimo = getUltimoLancamento("user-despesa-natural")
+    expect(ultimaResposta()).toContain("Despesa registrada")
+    expect(ultimaResposta()).toContain(categoriaEsperada)
+    expect(ultimo.tipo).toBe("gasto")
+    expect(ultimo.valor).toBe(valor)
   })
 
   it("mantém resumo calculando receitas e despesas corretamente", async () => {
@@ -379,6 +644,22 @@ describe("processarMensagem - exportação CSV", () => {
     expect(ultimaResposta()).toContain("Sua planilha Excel foi gerada com sucesso")
   })
 
+  it.each([
+    "planilha",
+    "excel",
+    "xlsx",
+    "exportar",
+  ])("alias %s gera XLSX", async (mensagem) => {
+    prepararUsuario("user-alias-xlsx")
+    inserirLancamento({ usuarioId: "user-alias-xlsx", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: mesAtual() })
+
+    await processarMensagem(sock, "grupo", "user-alias-xlsx", mensagem)
+
+    const [, documento] = chamadaDocumento()
+    expect(documento.fileName).toMatch(/\.xlsx$/)
+    expect(documento.mimetype).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+  })
+
   it("comando planilha bonita gera XLSX", async () => {
     prepararUsuario("user-a")
     inserirLancamento({ usuarioId: "user-a", tipo: "entrada", nome: "salario", categoria: "salario", valor: 2500, mes: mesAtual() })
@@ -409,7 +690,11 @@ describe("processarMensagem - exportação CSV", () => {
 
   it.each([
     "exportar",
+    "planilha",
+    "excel",
     "exportar csv",
+    "csv",
+    "baixar csv",
     "baixar planilha",
     "gerar planilha",
     "minha planilha",

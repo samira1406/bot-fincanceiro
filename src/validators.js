@@ -53,26 +53,35 @@ const entradasCanonicas = {
   salario:   "salario",
   pix:       "pix",
   freela:    "freela",
-  freelance: "freela",
+  free:      "free",
+  freelance: "freelance",
+  comissao:  "comissao",
+  comissionamento: "comissionamento",
+  consultoria: "consultoria",
   bonus:     "bonus",
   extra:     "extra",
   receita:   "receita",
   entrada:   "entrada",
 }
 
+const PADRAO_VALOR = String.raw`(?:\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[,.]\d{1,2})?)`
+
 const palavrasIniciaisNomeInvalido = new Set([
+  "oi", "ola", "bom", "boa", "opa", "e",
   "gastei", "paguei", "comprei", "recebi", "entrou", "ganhei", "caiu",
-  "salario", "resumo", "relatorio", "historico", "ajuda", "comandos",
+  "depositaram", "despesa", "saida", "salario", "resumo", "saldo",
+  "relatorio", "historico", "extrato", "ajuda", "comandos",
   "exportar", "baixar", "gerar", "planilha", "meta", "metas",
   "excluir", "corrigir", "corrige", "alterar", "apagar", "deletar",
-  "entrada", "receita", "xlsx",
+  "entrada", "receita", "xlsx", "excel", "csv",
 ])
 
 const termosFinanceirosNome = new Set([
   "mercado", "supermercado", "feira", "alimentacao", "alimento",
   "comida", "restaurante", "delivery", "ifood", "uber", "taxi",
   "onibus", "transporte", "gasolina", "combustivel", "farmacia",
-  "remedio", "internet", "aluguel", "pix", "freela", "freelance",
+  "remedio", "internet", "aluguel", "pix", "freela", "free", "freelance",
+  "comissao", "comissionamento", "consultoria",
   "bonus", "extra", "poupanca", "caixinha",
 ])
 
@@ -100,6 +109,29 @@ function montarEntrada(nomeRaw, valorRaw) {
 
   if (!valor || !categoriaValida(nome) || !categoriaValida(categoria)) return null
   return { tipo: "entrada", nome, categoria, valor }
+}
+
+function normalizarDescricaoLancamento(texto, fallback) {
+  const descricao = removerAcentos(normalizarCategoriaInput(texto))
+    .replace(/^(?:em|de|por|do|da|com|referente\s+a)\s+/u, "")
+    .replace(/[^\p{L}0-9\s_-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-")
+
+  return descricao || fallback
+}
+
+function montarEntradaNatural(descricaoRaw, valorRaw, fallback = "entrada") {
+  return montarEntrada(normalizarDescricaoLancamento(descricaoRaw, fallback), valorRaw)
+}
+
+function montarDespesaNatural(descricaoRaw, valorRaw) {
+  const valor = parseValorSimples(valorRaw)
+  const nome = normalizarDescricaoLancamento(descricaoRaw, "")
+  const categoria = normalizarCategoria(nome)
+
+  if (!valor || !nome || !categoriaValida(nome) || !categoriaValida(categoria)) return null
+  return { nome, categoria, valor }
 }
 
 /**
@@ -142,7 +174,7 @@ export function normalizarNomeUsuario(nome) {
   if (!/^[\p{L}\s'.-]+$/u.test(candidato)) return null
   if (palavrasIniciaisNomeInvalido.has(palavras[0])) return null
   if (palavras.some(palavra => termosFinanceirosNome.has(palavra))) return null
-  if (parseAjuda(candidato) || parseExportacao(candidato) ||
+  if (parseSaudacao(candidato) || parseAjuda(candidato) || parseExportacao(candidato) ||
       parseCorrecaoUltimo(candidato) || parseMetaCategoria(candidato) ||
       parseLancamento(candidato)) {
     return null
@@ -162,26 +194,48 @@ export function ehNomeUsuarioValido(nome) {
 
 export function parseLancamento(mensagem) {
   const texto = normalizarEspacos(mensagem)
-  const entradaValorPrimeiro = texto.match(/^(?:recebi|entrou|ganhei|caiu)\s+(\d+(?:[,.]\d{1,2})?)\s+([\p{L}0-9\-_]+)$/u)
-  if (entradaValorPrimeiro) {
-    return montarEntrada(entradaValorPrimeiro[2], entradaValorPrimeiro[1])
+  if (!texto) return null
+
+  const entradaNatural = texto.match(new RegExp(
+    `^(recebi|entrou|ganhei|caiu|depositaram)\\s+(${PADRAO_VALOR})` +
+    `(?:\\s+(?:(?:em|de|por|do|da|com|referente\\s+a)\\s+)?([\\p{L}][\\p{L}0-9 _-]*))?$`,
+    "u"
+  ))
+  if (entradaNatural) {
+    const fallback = entradaNatural[1] === "depositaram" ? "deposito" : "entrada"
+    return montarEntradaNatural(entradaNatural[3], entradaNatural[2], fallback)
   }
 
-  const entradaNomePrimeiro = texto.match(/^caiu\s+([\p{L}0-9\-_]+)\s+(\d+(?:[,.]\d{1,2})?)$/u)
+  const entradaNomePrimeiro = texto.match(new RegExp(
+    `^caiu\\s+([\\p{L}][\\p{L}0-9 _-]*)\\s+(${PADRAO_VALOR})$`,
+    "u"
+  ))
   if (entradaNomePrimeiro) {
-    return montarEntrada(entradaNomePrimeiro[1], entradaNomePrimeiro[2])
+    return montarEntradaNatural(entradaNomePrimeiro[1], entradaNomePrimeiro[2])
   }
 
-  const gastoNatural = texto.match(/^gastei\s+(\d+(?:[,.]\d{1,2})?)\s+(?:no|na|em|com)\s+([\p{L}0-9\-_]+)$/u)
+  const receitaDeclarada = texto.match(new RegExp(
+    `^(receita|entrada)\\s+(${PADRAO_VALOR})` +
+    `(?:\\s+(?:(?:em|de|por|do|da|com|referente\\s+a)\\s+)?([\\p{L}][\\p{L}0-9 _-]*))?$`,
+    "u"
+  ))
+  if (receitaDeclarada) {
+    return montarEntradaNatural(receitaDeclarada[3], receitaDeclarada[2], receitaDeclarada[1])
+  }
+
+  const gastoNatural = texto.match(new RegExp(
+    `^(gastei|paguei|comprei|despesa|saida|saída)\\s+(${PADRAO_VALOR})` +
+    `(?:\\s+(?:(?:no|na|em|com|de|do|da|por)\\s+)?([\\p{L}][\\p{L}0-9 _-]*))$`,
+    "u"
+  ))
   if (gastoNatural) {
-    const valor = parseValorSimples(gastoNatural[1])
-    const nome = normalizarCategoriaInput(gastoNatural[2])
-    const categoria = normalizarCategoria(nome)
-    if (!valor || !categoriaValida(categoria)) return null
-    return { nome, categoria, valor }
+    return montarDespesaNatural(gastoNatural[3], gastoNatural[2])
   }
 
-  const valorPrimeiro = texto.match(/^(\d+(?:[,.]\d{1,2})?)\s+([\p{L}0-9\-_]+)$/u)
+  const valorPrimeiro = texto.match(new RegExp(
+    `^(${PADRAO_VALOR})\\s+([\\p{L}0-9_-]+)$`,
+    "u"
+  ))
   if (valorPrimeiro) {
     const valor = parseValorSimples(valorPrimeiro[1])
     const nome = normalizarCategoriaInput(valorPrimeiro[2])
@@ -201,7 +255,7 @@ export function parseLancamento(mensagem) {
 
   if (!valor) return null
 
-  const nome      = partes[0]
+  const nome = removerAcentos(partes[0])
   if (partes.length === 2 && isEntrada(nome)) {
     return montarEntrada(nome, partes[1])
   }
@@ -223,11 +277,70 @@ export function parseLancamento(mensagem) {
  */
 export function parseValorSimples(texto) {
   if (!texto) return null
-  const normalizado = texto.trim().replace(",", ".")
-  if (!/^\d+(\.\d{1,2})?$/.test(normalizado)) return null
+  const bruto = String(texto).trim().replace(/\s+/g, "")
+  if (!new RegExp(`^${PADRAO_VALOR}$`).test(bruto)) return null
+
+  let normalizado = bruto
+  if (bruto.includes(".") && bruto.includes(",")) {
+    normalizado = bruto.replace(/\./g, "").replace(",", ".")
+  } else if (bruto.includes(",")) {
+    normalizado = bruto.replace(",", ".")
+  } else if (/^\d{1,3}(?:\.\d{3})+$/.test(bruto)) {
+    normalizado = bruto.replace(/\./g, "")
+  }
+
   const valor = parseFloat(normalizado)
   if (!Number.isFinite(valor) || valor <= 0 || valor > config.valorMaximo) return null
   return valor
+}
+
+/**
+ * Identifica uma mensagem composta somente por um valor monetário.
+ * @param {string} mensagem
+ * @returns {{ valor:number }|null}
+ */
+export function parseValorAmbiguo(mensagem) {
+  const valor = parseValorSimples(String(mensagem ?? "").trim())
+  return valor ? { valor } : null
+}
+
+/**
+ * Interpreta a escolha do tipo de um lançamento pendente.
+ * @param {string} mensagem
+ * @returns {"entrada"|"gasto"|null}
+ */
+export function parseTipoLancamentoPendente(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  const entradas = new Set(["1", "entrada", "receita", "recebido", "ganho"])
+  const gastos = new Set(["2", "gasto", "despesa", "saida", "pago"])
+
+  if (entradas.has(normalizado)) return "entrada"
+  if (gastos.has(normalizado)) return "gasto"
+  return null
+}
+
+/**
+ * Reconhece comandos que cancelam um lançamento pendente.
+ * @param {string} mensagem
+ * @returns {boolean}
+ */
+export function isCancelamentoPendencia(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  return new Set(["cancelar", "cancela", "sair", "voltar"]).has(normalizado)
+}
+
+/**
+ * Normaliza a categoria/descrição informada na segunda etapa da pendência.
+ * @param {string} mensagem
+ * @returns {{ nome:string, categoria:string }|null}
+ */
+export function parseCategoriaLancamentoPendente(mensagem) {
+  const nome = normalizarDescricaoLancamento(String(mensagem ?? ""), "")
+  if (!nome || !/\p{L}/u.test(nome)) return null
+
+  const categoria = normalizarCategoria(nome)
+  if (!categoriaValida(nome) || !categoriaValida(categoria)) return null
+  return { nome, categoria }
 }
 
 /**
@@ -236,7 +349,7 @@ export function parseValorSimples(texto) {
  * @returns {{ valor:number }|null}
  */
 export function parseCorrecaoUltimo(mensagem) {
-  const match = normalizarComando(mensagem).match(/^(corrigir|corrige|alterar) ultimo para (.+)$/)
+  const match = normalizarComando(mensagem).match(/^(corrigir|corrige|alterar|editar) ultimo para (.+)$/)
   if (!match) return null
 
   const valor = parseValorSimples(match[2])
@@ -265,6 +378,28 @@ export function parseAjuda(mensagem) {
 }
 
 /**
+ * Parseia saudações usadas para iniciar ou retomar o onboarding.
+ * @param {string} mensagem
+ * @returns {{ tipo:"saudacao" }|null}
+ */
+export function parseSaudacao(mensagem) {
+  const normalizado = normalizarComando(mensagem).replace(/\s+/g, " ")
+  const saudacoes = new Set([
+    "oi",
+    "ola",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "opa",
+    "e ai",
+    "start",
+    "inicio",
+  ])
+
+  return saudacoes.has(normalizado) ? { tipo: "saudacao" } : null
+}
+
+/**
  * Parseia comandos de exportação CSV.
  * @param {string} mensagem
  * @returns {{ tipo:"exportacao", formato:"csv"|"xlsx" }|null}
@@ -272,10 +407,14 @@ export function parseAjuda(mensagem) {
 export function parseExportacao(mensagem) {
   const normalizado = normalizarComando(mensagem).replace(/\s+/g, " ")
   const comandosCSV = new Set([
-    "exportar",
+    "csv",
     "exportar csv",
+    "baixar csv",
   ])
   const comandosXLSX = new Set([
+    "exportar",
+    "planilha",
+    "excel",
     "baixar planilha",
     "gerar planilha",
     "minha planilha",

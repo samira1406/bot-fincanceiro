@@ -192,6 +192,7 @@ const { extrairIdentificadorRemetente, extrairUsuarioIdMensagem, iniciarBot, isJ
 const {
   atualizarUsuario, criarUsuario, db, getUltimoLancamento, getUsuario,
 } = await import("../src/database.js")
+const { resetPendenciasLancamentoParaTestes } = await import("../src/pendingLancamentos.js")
 
 function prepararUsuario(id) {
   criarUsuario(id)
@@ -210,6 +211,7 @@ async function entregarMensagem({ remoteJid, texto, id = "msg-1", participant, f
 }
 
 beforeEach(async () => {
+  resetPendenciasLancamentoParaTestes()
   botMock.handlers = {}
   botMock.sendMessage.mockClear()
   botMock.config.beta = {
@@ -244,80 +246,144 @@ describe("bot - conversas privadas e grupos", () => {
     expect(usuarioId).toBe("5515999999999")
   })
 
-  it("primeira mensagem de gasto não é salva como nome do usuário", async () => {
+  it.each([
+    "oi",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "opa",
+    "e ai",
+    "e aí",
+    "start",
+    "inicio",
+    "início",
+  ])("saudação %s inicia onboarding e pergunta o nome", async (texto) => {
     await entregarMensagem({
       remoteJid: "5515000000001@s.whatsapp.net",
-      texto: "gastei 35 no mercado",
+      texto,
     })
 
     const usuario = getUsuario("5515000000001")
+    const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
     expect(usuario.nome).toBeNull()
-    expect(usuario.aguardando_nome).toBe(0)
-    expect(getUltimoLancamento("5515000000001").valor).toBe(35)
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toBe("Despesa registrada: R$ 35,00 em Mercado.")
+    expect(usuario.aguardando_nome).toBe(1)
+    expect(resposta).toContain("como você gostaria que eu te chamasse")
+    expect(resposta).toContain("Sadu")
   })
 
-  it("primeira mensagem ajuda não é salva como nome", async () => {
+  it("salva nome válido depois da saudação", async () => {
     await entregarMensagem({
       remoteJid: "5515000000002@s.whatsapp.net",
-      texto: "ajuda",
+      texto: "oi",
+      id: "msg-onboarding-1",
+    })
+    await entregarMensagem({
+      remoteJid: "5515000000002@s.whatsapp.net",
+      texto: "Sadu",
+      id: "msg-onboarding-2",
     })
 
     const usuario = getUsuario("5515000000002")
-    expect(usuario.nome).toBeNull()
+    expect(usuario.nome).toBe("Sadu")
     expect(usuario.aguardando_nome).toBe(0)
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("assistente financeiro")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Perfeito, Sadu")
   })
 
-  it("primeira mensagem resumo não é salva como nome", async () => {
+  it("saudação usa o nome salvo sem perguntar novamente", async () => {
+    prepararUsuario("5515000000003")
+    atualizarUsuario("5515000000003", { nome: "Sadu" })
+
     await entregarMensagem({
       remoteJid: "5515000000003@s.whatsapp.net",
-      texto: "resumo",
+      texto: "oi",
     })
 
-    const usuario = getUsuario("5515000000003")
-    expect(usuario.nome).toBeNull()
-    expect(usuario.aguardando_nome).toBe(0)
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("RESUMO DO MÊS")
+    const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
+    expect(resposta).toContain("Oi, Sadu")
+    expect(resposta).not.toContain("como você gostaria que eu te chamasse")
   })
 
-  it("primeira mensagem exportar planilha não é salva como nome", async () => {
+  it("ajuda continua exibindo os comandos completos", async () => {
+    prepararUsuario("5515000000004")
+
     await entregarMensagem({
       remoteJid: "5515000000004@s.whatsapp.net",
-      texto: "exportar planilha",
+      texto: "ajuda",
     })
 
-    const usuario = getUsuario("5515000000004")
+    const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
+    expect(resposta).toContain("gastei 35 no mercado")
+    expect(resposta).toContain("recebi 2500 salario")
+    expect(resposta).toContain("exportar planilha")
+  })
+
+  it("conclui 1250 + 2 + mercado sem transformar 2 em R$ 2,00", async () => {
+    prepararUsuario("5515000000010")
+
+    await entregarMensagem({
+      remoteJid: "5515000000010@s.whatsapp.net",
+      texto: "1250",
+      id: "msg-pendencia-1",
+    })
+    await entregarMensagem({
+      remoteJid: "5515000000010@s.whatsapp.net",
+      texto: "2",
+      id: "msg-pendencia-2",
+    })
+
+    expect(getUltimoLancamento("5515000000010")).toBeNull()
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("vou registrar como gasto")
+
+    await entregarMensagem({
+      remoteJid: "5515000000010@s.whatsapp.net",
+      texto: "mercado",
+      id: "msg-pendencia-3",
+    })
+
+    expect(getUltimoLancamento("5515000000010")).toMatchObject({
+      tipo: "gasto",
+      valor: 1250,
+      categoria: "mercado",
+    })
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toBe("Despesa registrada: R$ 1.250,00 em Mercado.")
+  })
+
+  it.each([
+    "gastei 35 no mercado",
+    "recebi 1250 em freelance",
+    "resumo",
+    "planilha",
+    "exportar planilha",
+  ])("não salva %s como nome enquanto aguarda cadastro", async (texto) => {
+    criarUsuario("5515000000005")
+
+    await entregarMensagem({
+      remoteJid: "5515000000005@s.whatsapp.net",
+      texto,
+    })
+
+    const usuario = getUsuario("5515000000005")
+    const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
     expect(usuario.nome).toBeNull()
-    expect(usuario.aguardando_nome).toBe(0)
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Você ainda não tem lançamentos para exportar")
+    expect(usuario.aguardando_nome).toBe(1)
+    expect(getUltimoLancamento("5515000000005")).toBeNull()
+    expect(resposta).toContain("parece mais um comando do que um nome")
+    expect(resposta).toContain("Sadu")
   })
 
   it("aceita nome válido declarado no primeiro contato", async () => {
     await entregarMensagem({
-      remoteJid: "5515000000005@s.whatsapp.net",
+      remoteJid: "5515000000006@s.whatsapp.net",
       texto: "meu nome é Sadu",
     })
 
-    const usuario = getUsuario("5515000000005")
+    const usuario = getUsuario("5515000000006")
     expect(usuario.nome).toBe("Sadu")
     expect(usuario.aguardando_nome).toBe(0)
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Sadu")
-  })
-
-  it("mensagem financeira enquanto aguarda nome não contamina cadastro", async () => {
-    criarUsuario("5515000000006")
-
-    await entregarMensagem({
-      remoteJid: "5515000000006@s.whatsapp.net",
-      texto: "gastei 12,50 no mercado",
-    })
-
-    const usuario = getUsuario("5515000000006")
-    expect(usuario.nome).toBeNull()
-    expect(usuario.aguardando_nome).toBe(0)
-    expect(getUltimoLancamento("5515000000006").valor).toBe(12.5)
-    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toBe("Despesa registrada: R$ 12,50 em Mercado.")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Perfeito, Sadu")
   })
 
   it("prefere participante com telefone quando remoteJid privado vem como @lid", () => {
@@ -438,6 +504,18 @@ describe("bot - conversas privadas e grupos", () => {
     expect(getUltimoLancamento("5515888888888")).toBeNull()
   })
 
+  it("número não autorizado não recebe boas-vindas ao enviar oi", async () => {
+    botMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5511999999999"] }
+
+    await entregarMensagem({
+      remoteJid: "5515888888888@s.whatsapp.net",
+      texto: "oi",
+    })
+
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5515888888888")).toBeNull()
+  })
+
   it("número não autorizado não registra receita", async () => {
     botMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5515999999999"] }
 
@@ -501,6 +579,19 @@ describe("bot - conversas privadas e grupos", () => {
     expect(botMock.sendMessage).not.toHaveBeenCalled()
     expect(getUsuario("5515999999999")).toBeNull()
     expect(getUltimoLancamento("5515999999999")).toBeNull()
+  })
+
+  it("grupo não autorizado não recebe boas-vindas ao enviar oi", async () => {
+    botMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5511999999999"] }
+
+    await entregarMensagem({
+      remoteJid: "120363000000000@g.us",
+      participant: "5515999999999@s.whatsapp.net",
+      texto: "oi",
+    })
+
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5515999999999")).toBeNull()
   })
 
   it("grupo autorizado processa participante autorizado por número", async () => {

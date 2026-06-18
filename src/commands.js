@@ -24,6 +24,7 @@ import {
   fmtCategorias, fmtSaldo, fmtBarraMeta, fmtHistoricoLancamentos,
   fmtAjuda, fmtBetaFechado, fmtMensagemNaoEntendida,
   fmtTituloResumo, obterNomeExibicaoUsuario,
+  fmtCategoriaPendente, fmtPendenciaCancelada, fmtValorAmbiguo,
   fmtTipoLancamento, fmtCategoriaAmigavel,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
@@ -32,8 +33,14 @@ import {
 } from "./formatters.js"
 import {
   parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
-  parseMetaCategoria, parseValorSimples,
+  isCancelamentoPendencia, parseCategoriaLancamentoPendente,
+  parseMetaCategoria, parseTipoLancamentoPendente,
+  parseValorAmbiguo, parseValorSimples,
 } from "./validators.js"
+import {
+  iniciarPendenciaLancamento, limparPendenciaLancamento,
+  obterPendenciaLancamento, selecionarTipoPendencia,
+} from "./pendingLancamentos.js"
 
 // ── Envio seguro ──────────────────────────────────────────────────────────────
 
@@ -403,6 +410,34 @@ export async function handleRespostaCaixinha(sock, from, usuarioId, nome, mensag
   await enviar(sock, from, `❓ *${nomeExibicao}*, responda apenas *sim* ou *não*.`)
 }
 
+async function registrarLancamentoComConfirmacao(
+  sock,
+  from,
+  usuarioId,
+  nomeUsuario,
+  { tipo, nome, categoria, valor }
+) {
+  inserirLancamento({ usuarioId, tipo, nome, categoria, valor, mes: mesAtual() })
+
+  if (tipo === "entrada") {
+    await enviar(sock, from, fmtConfirmacaoReceita({ valor, categoria }))
+    return
+  }
+
+  let texto = fmtConfirmacaoDespesa({ valor, categoria })
+  const { mes, ano } = periodoAtual()
+  const meta = buscarMetaCategoria(usuarioId, categoria, mes, ano)
+  if (meta) {
+    const gastoAtual = calcularGastoCategoriaNoPeriodo(usuarioId, categoria, mes, ano)
+    texto += "\n\n" + (gastoAtual > meta.valor_limite
+      ? fmtMetaCategoriaUltrapassada(meta, gastoAtual)
+      : fmtProgressoMetaCategoria(meta, gastoAtual))
+  }
+
+  await enviar(sock, from, texto)
+  await verificarMeta(sock, from, usuarioId, nomeUsuario, valor)
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
@@ -437,6 +472,10 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     "início":          () => handleComandos(sock, from),
     "start":           () => handleComandos(sock, from),
     "resumo":          () => handleResumo(sock, from, usuarioId, nomeSalvo),
+    "saldo":           () => handleResumo(sock, from, usuarioId, nomeSalvo),
+    "meu resumo":      () => handleResumo(sock, from, usuarioId, nomeSalvo),
+    "resumo do mes":   () => handleResumo(sock, from, usuarioId, nomeSalvo),
+    "resumo do mês":   () => handleResumo(sock, from, usuarioId, nomeSalvo),
     "relatorio":       () => handleRelatorio(sock, from, usuarioId, nomeSalvo),
     "relatorio geral": () => handleRelatorioGeral(sock, from),
     "categorias":      () => handleCategorias(sock, from, usuarioId, nome),
@@ -446,11 +485,20 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     "últimos gastos":  () => handleHistorico(sock, from, usuarioId, nome),
     "ultimos lancamentos":    () => handleHistorico(sock, from, usuarioId, nome),
     "últimos lançamentos":    () => handleHistorico(sock, from, usuarioId, nome),
+    "extrato":         () => handleHistorico(sock, from, usuarioId, nome),
+    "ultimos":         () => handleHistorico(sock, from, usuarioId, nome),
+    "últimos":         () => handleHistorico(sock, from, usuarioId, nome),
+    "lancamentos":     () => handleHistorico(sock, from, usuarioId, nome),
+    "lançamentos":     () => handleHistorico(sock, from, usuarioId, nome),
     "metas":          () => handleListarMetasCategoria(sock, from, usuarioId),
     "minhas metas":   () => handleListarMetasCategoria(sock, from, usuarioId),
     "ver metas":      () => handleListarMetasCategoria(sock, from, usuarioId),
-    "exportar":        () => handleExportar(sock, from, usuarioId, nome),
+    "csv":             () => handleExportar(sock, from, usuarioId, nome),
     "exportar csv":    () => handleExportar(sock, from, usuarioId, nome),
+    "baixar csv":      () => handleExportar(sock, from, usuarioId, nome),
+    "exportar":        () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "planilha":        () => handleExportarXlsx(sock, from, usuarioId, nome),
+    "excel":           () => handleExportarXlsx(sock, from, usuarioId, nome),
     "exportar planilha": () => handleExportarXlsx(sock, from, usuarioId, nome),
     "baixar planilha": () => handleExportarXlsx(sock, from, usuarioId, nome),
     "gerar planilha":  () => handleExportarXlsx(sock, from, usuarioId, nome),
@@ -466,23 +514,75 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     "excluir último":  () => handleApagarUltimo(sock, from, usuarioId, nome),
     "deletar ultimo":  () => handleApagarUltimo(sock, from, usuarioId, nome),
     "deletar último":  () => handleApagarUltimo(sock, from, usuarioId, nome),
+    "desfazer":        () => handleApagarUltimo(sock, from, usuarioId, nome),
+    "corrigir ultimo": () => enviar(sock, from, "Informe o novo valor. Exemplo: corrigir ultimo para 45"),
+    "corrigir último": () => enviar(sock, from, "Informe o novo valor. Exemplo: corrigir ultimo para 45"),
+    "editar ultimo":   () => enviar(sock, from, "Informe o novo valor. Exemplo: editar ultimo para 45"),
+    "editar último":   () => enviar(sock, from, "Informe o novo valor. Exemplo: editar ultimo para 45"),
     "apagar hoje":     () => handleApagarPeriodo(sock, from, usuarioId, nome, "hoje"),
     "apagar semana":   () => handleApagarPeriodo(sock, from, usuarioId, nome, "semana"),
     "apagar mes":      () => handleApagarPeriodo(sock, from, usuarioId, nome, "mes"),
   }
 
-  if (comandos[lower]) {
-    await comandos[lower]()
+  const ajuda = parseAjuda(mensagem)
+  const exportacao = parseExportacao(mensagem)
+  const correcaoUltimo = parseCorrecaoUltimo(mensagem)
+  const metaCategoria = parseMetaCategoria(mensagem)
+  const comandoExato = comandos[lower]
+  const temComando = Boolean(
+    comandoExato || ajuda || exportacao || correcaoUltimo ||
+    metaCategoria || partes[0] === "meta"
+  )
+
+  const pendencia = obterPendenciaLancamento(from, usuarioId)
+  if (pendencia) {
+    if (isCancelamentoPendencia(mensagem)) {
+      limparPendenciaLancamento(from, usuarioId)
+      await enviar(sock, from, fmtPendenciaCancelada())
+      return
+    }
+
+    // Comandos continuam funcionando sem serem salvos como categoria.
+    // A pendência permanece ativa para o usuário concluí-la depois.
+    if (!temComando) {
+      if (pendencia.etapa === "tipo") {
+        const tipo = parseTipoLancamentoPendente(mensagem)
+        if (!tipo) {
+          await enviar(sock, from, fmtValorAmbiguo(pendencia.valor))
+          return
+        }
+
+        selecionarTipoPendencia(from, usuarioId, tipo)
+        await enviar(sock, from, fmtCategoriaPendente(tipo))
+        return
+      }
+
+      const categoriaPendente = parseCategoriaLancamentoPendente(mensagem)
+      if (!categoriaPendente) {
+        await enviar(sock, from, fmtCategoriaPendente(pendencia.tipo))
+        return
+      }
+
+      await registrarLancamentoComConfirmacao(sock, from, usuarioId, nome, {
+        tipo: pendencia.tipo,
+        valor: pendencia.valor,
+        ...categoriaPendente,
+      })
+      limparPendenciaLancamento(from, usuarioId)
+      return
+    }
+  }
+
+  if (comandoExato) {
+    await comandoExato()
     return
   }
 
-  const ajuda = parseAjuda(mensagem)
   if (ajuda) {
     await handleComandos(sock, from)
     return
   }
 
-  const exportacao = parseExportacao(mensagem)
   if (exportacao) {
     if (exportacao.formato === "xlsx") {
       await handleExportarXlsx(sock, from, usuarioId, nome)
@@ -492,13 +592,11 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     return
   }
 
-  const correcaoUltimo = parseCorrecaoUltimo(mensagem)
   if (correcaoUltimo) {
     await handleCorrigirUltimo(sock, from, usuarioId, correcaoUltimo.valor)
     return
   }
 
-  const metaCategoria = parseMetaCategoria(mensagem)
   if (metaCategoria) {
     await handleCriarMetaCategoria(sock, from, usuarioId, metaCategoria)
     return
@@ -511,6 +609,13 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   }
 
   // ── Lançamento ───────────────────────────────────────────────────────────
+  const valorAmbiguo = parseValorAmbiguo(mensagem)
+  if (valorAmbiguo) {
+    iniciarPendenciaLancamento(from, usuarioId, valorAmbiguo.valor)
+    await enviar(sock, from, fmtValorAmbiguo(valorAmbiguo.valor))
+    return
+  }
+
   const lancamento = parseLancamento(mensagem)
   if (!lancamento) {
     await enviar(sock, from, fmtMensagemNaoEntendida())
@@ -520,23 +625,10 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   const { nome: nomeLanc, categoria, valor } = lancamento
   const tipo = lancamento.tipo ?? (config.palavrasEntrada.includes(nomeLanc) ? "entrada" : "gasto")
 
-  inserirLancamento({ usuarioId, tipo, nome: nomeLanc, categoria, valor, mes: mesAtual() })
-
-  if (tipo === "entrada") {
-    await enviar(sock, from, fmtConfirmacaoReceita({ valor, categoria }))
-  } else {
-    let texto = fmtConfirmacaoDespesa({ valor, categoria })
-
-    const { mes, ano } = periodoAtual()
-    const meta = buscarMetaCategoria(usuarioId, categoria, mes, ano)
-    if (meta) {
-      const gastoAtual = calcularGastoCategoriaNoPeriodo(usuarioId, categoria, mes, ano)
-      texto += "\n\n" + (gastoAtual > meta.valor_limite
-        ? fmtMetaCategoriaUltrapassada(meta, gastoAtual)
-        : fmtProgressoMetaCategoria(meta, gastoAtual))
-    }
-
-    await enviar(sock, from, texto)
-    await verificarMeta(sock, from, usuarioId, nome, valor)
-  }
+  await registrarLancamentoComConfirmacao(sock, from, usuarioId, nome, {
+    tipo,
+    nome: nomeLanc,
+    categoria,
+    valor,
+  })
 }

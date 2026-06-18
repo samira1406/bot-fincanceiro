@@ -166,6 +166,27 @@ Nunca versione o `.env`.
 
 ---
 
+## Onboarding e nome do usuário
+
+Saudações como `oi`, `ola`, `olá`, `bom dia`, `boa tarde`, `boa noite`, `opa`, `e ai`, `e aí`, `start`, `inicio` e `início` iniciam ou retomam o onboarding.
+
+Para um usuário novo, o bot pergunta como ele gostaria de ser chamado. Depois de receber um nome válido, passa a usar esse nome em saudações, resumos e planilhas.
+
+Exemplo:
+
+```text
+Usuário: oi
+Bot: Oi! Eu sou seu assistente financeiro pelo WhatsApp.
+     Antes de começar, como você gostaria que eu te chamasse?
+
+Usuário: Sadu
+Bot: Perfeito, Sadu!
+```
+
+Comandos e frases financeiras, como `gastei 35 no mercado`, `resumo` e `exportar planilha`, nunca são salvos como nome. Enquanto aguarda um nome válido, o bot pede um nome ou apelido novamente.
+
+---
+
 ## Comandos
 
 ### Ajuda
@@ -174,10 +195,12 @@ ajuda       # mostra exemplos principais
 comandos    # mostra exemplos principais
 como usar   # mostra exemplos principais
 menu        # mostra exemplos principais
-inicio      # mostra exemplos principais
-início      # mostra exemplos principais
-start       # mostra exemplos principais
+inicio      # inicia ou retoma a saudação
+início      # inicia ou retoma a saudação
+start       # inicia ou retoma a saudação
 ```
+
+`ajuda`, `comandos`, `como usar` e `menu` exibem um menu numerado com exemplos e uma explicação breve de cada recurso.
 
 ### Lançamentos
 ```
@@ -187,36 +210,74 @@ mercado 50                    # gasto, categoria mercado
 50 mercado                    # gasto, categoria mercado
 uber transporte 30            # gasto, categoria transporte
 gastei 50 no mercado          # gasto, categoria mercado
+gastei 50 mercado             # gasto, categoria mercado
+paguei 50 internet            # gasto, categoria internet
+comprei 20 padaria            # gasto, categoria padaria
+despesa 20 padaria            # gasto, categoria padaria
 gastei 80 no ifood            # gasto, categoria alimentacao
 salario 5000                  # entrada
 freela 800                    # entrada
+freelance 300                 # entrada
+comissao 1250                 # entrada
+comissão 1250                 # entrada
+pix 200                       # entrada
 2500 salario                  # entrada
 recebi 2500 salario           # entrada
 recebi 2500 salário           # entrada
+recebi 1250 em comissionamento # entrada
+recebi 1250 em free           # entrada
+recebi 1250 em freelance      # entrada
+recebi 1250 por consultoria   # entrada
+recebi 1250 referente a freela # entrada
 entrou 500 pix                # entrada
 ganhei 1200 freelance         # entrada
 caiu 2500 salario             # entrada
 caiu salario 2500             # entrada
+depositaram 1000              # entrada
 receita 3000                  # entrada
 entrada 3000                  # entrada
 ```
+
+Valores aceitam formatos como `12,50`, `12.50`, `1.250,00` e `1250`.
+
+Quando o usuário envia somente um valor, o bot mantém uma pendência individual até completar o lançamento:
+
+```text
+1250
+2
+mercado
+```
+
+Nesse exemplo, o bot registra uma despesa de `R$ 1.250,00` em Mercado. Na escolha do tipo, `1`, `entrada`, `receita`, `recebido` e `ganho` significam entrada; `2`, `gasto`, `despesa`, `saida`, `saída` e `pago` significam gasto.
+
+Para abandonar o fluxo sem registrar, envie `cancelar`, `cancela`, `sair` ou `voltar`. Comandos como `resumo`, `ajuda`, `planilha` e `extrato` continuam funcionando e não são usados como categoria da pendência.
 
 ### Relatórios
 ```
 relatorio        # detalhado do mês
 relatorio geral  # todos os membros
 resumo           # saldo rápido
+saldo            # saldo rápido
+meu resumo       # saldo rápido
+resumo do mes    # saldo rápido
 categorias       # gastos por categoria
 historico        # últimos 5 lançamentos
 histórico        # últimos 5 lançamentos
+extrato          # últimos 5 lançamentos
+ultimos          # últimos 5 lançamentos
+lancamentos      # últimos 5 lançamentos
 ultimos gastos   # últimos 5 lançamentos
 ultimos lancamentos # últimos 5 lançamentos
 ```
 
 ### Exportação de Planilha
 ```
+csv                 # CSV simples por WhatsApp
 exportar csv        # CSV simples por WhatsApp
-exportar            # CSV simples por WhatsApp
+baixar csv          # CSV simples por WhatsApp
+exportar            # XLSX visual por WhatsApp
+planilha            # XLSX visual por WhatsApp
+excel               # XLSX visual por WhatsApp
 exportar planilha   # XLSX visual por WhatsApp
 baixar planilha     # XLSX visual por WhatsApp
 gerar planilha      # XLSX visual por WhatsApp

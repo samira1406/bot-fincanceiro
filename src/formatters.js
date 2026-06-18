@@ -87,38 +87,41 @@ export function fmtTituloResumo(usuarioOuNome) {
 }
 
 export function fmtAjuda() {
-  return `Olá! Eu sou seu assistente financeiro pelo WhatsApp.
+  return `📋 *MENU DO BOT FINANÇAS*
 
-Você pode me mandar mensagens assim:
+1. 💸 *Registrar gasto*
+   Envie algo como:
+   gastei 35 no mercado
+   mercado 35
+   uber 12,50
 
-💸 Registrar gasto:
-gastei 35 no mercado
-gastei 80 no ifood
-25 uber
+2. 💰 *Registrar entrada*
+   Envie algo como:
+   recebi 2500 salario
+   recebi 1250 em freelance
+   pix 200
 
-💰 Registrar entrada:
-recebi 2500 salario
-entrou 500 pix
-ganhei 1200 freelance
+3. 📊 *Ver resumo*
+   Mostra entradas, gastos e saldo do mês.
+   Comando: resumo
 
-📊 Ver resumo:
-resumo
+4. 🧾 *Ver histórico*
+   Mostra os últimos lançamentos.
+   Comando: historico
 
-🧾 Ver histórico:
-historico
+5. 📁 *Exportar planilha*
+   Gera um Excel com lançamentos e resumo.
+   Comandos: planilha ou exportar planilha
 
-🎯 Criar meta:
-meta mercado 600
+6. 🎯 *Metas por categoria*
+   Define um limite de gasto.
+   Exemplo: meta mercado 600
 
-📁 Exportar planilha:
-exportar csv
-exportar planilha
-
-✏️ Corrigir:
-corrigir ultimo para 45
-
-🗑️ Apagar:
-excluir ultimo`
+7. ✏️ *Corrigir ou excluir*
+   Ajusta ou remove o último lançamento.
+   Exemplos:
+   corrigir ultimo para 45
+   excluir ultimo`
 }
 
 /**
@@ -126,16 +129,67 @@ excluir ultimo`
  * @returns {string}
  */
 export function fmtBoasVindas() {
-  return `Olá! Eu sou seu assistente financeiro pelo WhatsApp.
+  return `👋 Oi! Eu sou seu assistente financeiro pelo WhatsApp.
 
-Você pode me mandar:
-“gastei 35 no mercado”
-“recebi 2500 salario”
-“resumo”
-“meta mercado 600”
+Eu posso te ajudar a registrar gastos, entradas, metas e gerar sua planilha. 📊
+
+Antes de começar, como você gostaria que eu te chamasse?
+
+Exemplo:
+Sadu`
+}
+
+/**
+ * Confirma o nome salvo e mostra os primeiros exemplos.
+ * @param {string} nome
+ * @returns {string}
+ */
+export function fmtNomeSalvo(nome) {
+  const nomeExibicao = obterNomeExibicaoUsuario(nome) ?? "Usuário"
+  return `Perfeito, ${nomeExibicao}! ✅
+
+Agora você já pode me mandar mensagens como:
+💸 gastei 35 no mercado
+💰 recebi 2500 salario
+📊 resumo
+🎯 meta mercado 600
+📁 exportar planilha
+
+Se quiser ver todos os comandos, mande:
+ajuda`
+}
+
+/**
+ * Cumprimenta um usuário que já possui nome válido.
+ * @param {string|object} usuarioOuNome
+ * @returns {string}
+ */
+export function fmtSaudacaoUsuario(usuarioOuNome) {
+  const nome = obterNomeExibicaoUsuario(usuarioOuNome)
+  if (!nome) return fmtBoasVindas()
+
+  return `👋 Oi, ${nome}! Como posso te ajudar hoje?
+
+Você pode mandar:
+💸 gastei 35 no mercado
+💰 recebi 2500 salario
+📊 resumo
 
 Para ver todos os comandos, mande:
 ajuda`
+}
+
+/**
+ * Pede novamente um nome quando a resposta parece comando ou lançamento.
+ * @returns {string}
+ */
+export function fmtNomeInvalido() {
+  return `Hmm, isso parece mais um comando do que um nome. 🙂
+
+Como você gostaria que eu te chamasse?
+
+Exemplo:
+Sadu`
 }
 
 /**
@@ -151,6 +205,54 @@ recebi 2500 salario
 resumo
 
 Ou mande “ajuda” para ver os comandos.`
+}
+
+/**
+ * Orienta o usuário quando a mensagem contém apenas um valor.
+ * @param {number} valor
+ * @returns {string}
+ */
+export function fmtValorAmbiguo(valor) {
+  return `Entendi o valor R$ ${fmtValor(valor)}, mas preciso saber o tipo.
+
+Responda:
+1 - Entrada
+2 - Gasto
+
+Ou mande completo, por exemplo:
+recebi ${fmtValor(valor)} freelance
+gastei ${fmtValor(valor)} aluguel`
+}
+
+/**
+ * Pede categoria ou descrição depois que o usuário escolhe o tipo.
+ * @param {"entrada"|"gasto"} tipo
+ * @returns {string}
+ */
+export function fmtCategoriaPendente(tipo) {
+  if (tipo === "entrada") {
+    return `Certo, vou registrar como entrada. Qual categoria ou descrição?
+
+Exemplos:
+salario
+freelance
+pix`
+  }
+
+  return `Certo, vou registrar como gasto. Qual categoria ou descrição?
+
+Exemplos:
+mercado
+aluguel
+internet`
+}
+
+/**
+ * Confirma o cancelamento de um lançamento pendente.
+ * @returns {string}
+ */
+export function fmtPendenciaCancelada() {
+  return "Tudo bem, cancelei esse lançamento. Nenhum valor foi registrado."
 }
 
 /**
@@ -190,6 +292,8 @@ const categoriasAmigaveis = {
   geral:       "Geral",
   pix:         "Pix",
   freela:      "Freela",
+  comissao:    "Comissão",
+  deposito:    "Depósito",
   bonus:       "Bônus",
   extra:       "Extra",
   receita:     "Receita",
@@ -219,7 +323,12 @@ function chaveAmigavel(texto) {
 export function fmtCategoriaAmigavel(categoria) {
   const chave = chaveAmigavel(categoria)
   if (!chave) return ""
-  return categoriasAmigaveis[chave] ?? fmtCapitalizado(String(categoria).trim())
+  return categoriasAmigaveis[chave] ?? String(categoria)
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .split(/\s+/)
+    .map(fmtCapitalizado)
+    .join(" ")
 }
 
 /**

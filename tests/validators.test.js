@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, vi } from "vitest"
 import {
   ehNomeUsuarioValido, normalizarNomeUsuario,
+  isCancelamentoPendencia, parseCategoriaLancamentoPendente,
   parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
-  parseMetaCategoria, parseValorSimples,
+  parseMetaCategoria, parseSaudacao, parseTipoLancamentoPendente,
+  parseValorAmbiguo, parseValorSimples,
 } from "../src/validators.js"
 
 // Mock config para testes
@@ -15,8 +17,18 @@ vi.mock("../src/config.js", () => ({
 
 describe("nomes de usuário", () => {
   it.each([
+    "oi",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
     "gastei 35 no mercado",
     "recebi 2500 salario",
+    "planilha",
+    "excel",
+    "saldo",
+    "extrato",
     "exportar planilha",
     "ajuda",
     "resumo",
@@ -37,6 +49,29 @@ describe("nomes de usuário", () => {
 
   it("aceita frase sou", () => {
     expect(normalizarNomeUsuario("sou Sadu")).toBe("Sadu")
+  })
+})
+
+describe("parseSaudacao", () => {
+  it.each([
+    "oi",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "opa",
+    "e ai",
+    "e aí",
+    "start",
+    "inicio",
+    "início",
+  ])("reconhece %s", (mensagem) => {
+    expect(parseSaudacao(mensagem)).toEqual({ tipo: "saudacao" })
+  })
+
+  it("não confunde comando financeiro com saudação", () => {
+    expect(parseSaudacao("gastei 35 no mercado")).toBeNull()
   })
 })
 
@@ -83,6 +118,21 @@ describe("parseLancamento", () => {
         nome: "ifood", categoria: "alimentacao", valor: 80,
       })
     })
+
+    it.each([
+      ["gastei 10 mercado", "mercado", 10],
+      ["paguei 50 internet", "internet", 50],
+      ["comprei 20 padaria", "padaria", 20],
+      ["despesa 20 padaria", "padaria", 20],
+      ["saida 20 padaria", "padaria", 20],
+      ["saída 20 padaria", "padaria", 20],
+    ])("parseia despesa natural %s", (mensagem, categoria, valor) => {
+      expect(parseLancamento(mensagem)).toEqual({
+        nome: categoria,
+        categoria,
+        valor,
+      })
+    })
   })
 
   describe("formato com categoria: nome categoria valor", () => {
@@ -110,7 +160,7 @@ describe("parseLancamento", () => {
       ["recebi 2500 salario", { nome: "salario", categoria: "salario", valor: 2500 }],
       ["recebi 2500 salário", { nome: "salario", categoria: "salario", valor: 2500 }],
       ["entrou 500 pix", { nome: "pix", categoria: "pix", valor: 500 }],
-      ["ganhei 1200 freelance", { nome: "freela", categoria: "freela", valor: 1200 }],
+      ["ganhei 1200 freelance", { nome: "freelance", categoria: "freelance", valor: 1200 }],
       ["caiu 2500 salario", { nome: "salario", categoria: "salario", valor: 2500 }],
       ["caiu salario 2500", { nome: "salario", categoria: "salario", valor: 2500 }],
       ["salario 2500", { nome: "salario", categoria: "salario", valor: 2500 }],
@@ -121,6 +171,45 @@ describe("parseLancamento", () => {
       expect(parseLancamento(mensagem)).toEqual({
         tipo: "entrada",
         ...esperado,
+      })
+    })
+
+    it.each([
+      ["recebi 1250 em comissionamento", "comissionamento"],
+      ["Recebi 1250 em free", "free"],
+      ["recebi 1250 em freelance", "freelance"],
+      ["recebi 1250 de comissionamento", "comissionamento"],
+      ["recebi 1250 por consultoria", "consultoria"],
+      ["recebi 1250 referente a freela", "freela"],
+      ["recebi 1250 do cliente", "cliente"],
+      ["recebi 1250 da venda", "venda"],
+    ])("parseia receita natural %s", (mensagem, categoria) => {
+      expect(parseLancamento(mensagem)).toEqual({
+        tipo: "entrada",
+        nome: categoria,
+        categoria,
+        valor: 1250,
+      })
+    })
+
+    it.each([
+      ["comissao 1250", "comissao", 1250],
+      ["comissão 1250", "comissao", 1250],
+      ["freela 300", "freela", 300],
+      ["freelance 300", "freelance", 300],
+      ["pix 200", "pix", 200],
+      ["entrou 450", "entrada", 450],
+      ["ganhei 80", "entrada", 80],
+      ["caiu 1250", "entrada", 1250],
+      ["depositaram 1000", "deposito", 1000],
+      ["receita 1250 consultoria", "consultoria", 1250],
+      ["entrada 1250 consultoria", "consultoria", 1250],
+    ])("parseia atalho de receita %s", (mensagem, categoria, valor) => {
+      expect(parseLancamento(mensagem)).toEqual({
+        tipo: "entrada",
+        nome: categoria,
+        categoria,
+        valor,
       })
     })
   })
@@ -172,6 +261,14 @@ describe("parseValorSimples", () => {
     expect(parseValorSimples("1500,50")).toBe(1500.50)
   })
 
+  it("parseia valor brasileiro com separador de milhar", () => {
+    expect(parseValorSimples("1.250,00")).toBe(1250)
+  })
+
+  it("parseia valor com ponto decimal", () => {
+    expect(parseValorSimples("12.50")).toBe(12.5)
+  })
+
   it("retorna null para string vazia", () => {
     expect(parseValorSimples("")).toBeNull()
   })
@@ -186,6 +283,63 @@ describe("parseValorSimples", () => {
 
   it("retorna null para texto não numérico", () => {
     expect(parseValorSimples("abc")).toBeNull()
+  })
+})
+
+describe("parseValorAmbiguo", () => {
+  it("identifica valor sozinho sem criar lançamento", () => {
+    expect(parseValorAmbiguo("1250")).toEqual({ valor: 1250 })
+    expect(parseLancamento("1250")).toBeNull()
+  })
+
+  it("não trata texto aleatório como valor", () => {
+    expect(parseValorAmbiguo("Sadu")).toBeNull()
+  })
+})
+
+describe("pendência de lançamento", () => {
+  it.each([
+    ["1", "entrada"],
+    ["entrada", "entrada"],
+    ["receita", "entrada"],
+    ["recebido", "entrada"],
+    ["ganho", "entrada"],
+    ["2", "gasto"],
+    ["gasto", "gasto"],
+    ["despesa", "gasto"],
+    ["saida", "gasto"],
+    ["saída", "gasto"],
+    ["pago", "gasto"],
+  ])("interpreta %s como %s", (mensagem, tipo) => {
+    expect(parseTipoLancamentoPendente(mensagem)).toBe(tipo)
+  })
+
+  it("não transforma outro valor em escolha de tipo", () => {
+    expect(parseTipoLancamentoPendente("1250")).toBeNull()
+  })
+
+  it.each([
+    "cancelar",
+    "cancela",
+    "sair",
+    "voltar",
+  ])("reconhece %s como cancelamento", (mensagem) => {
+    expect(isCancelamentoPendencia(mensagem)).toBe(true)
+  })
+
+  it("normaliza categoria ou descrição", () => {
+    expect(parseCategoriaLancamentoPendente("Conta de luz")).toEqual({
+      nome: "conta-de-luz",
+      categoria: "conta-de-luz",
+    })
+    expect(parseCategoriaLancamentoPendente("mercado")).toEqual({
+      nome: "mercado",
+      categoria: "mercado",
+    })
+  })
+
+  it("rejeita categoria apenas numérica", () => {
+    expect(parseCategoriaLancamentoPendente("2")).toBeNull()
   })
 })
 
@@ -204,6 +358,10 @@ describe("parseCorrecaoUltimo", () => {
 
   it("parseia alterar ultimo", () => {
     expect(parseCorrecaoUltimo("alterar ultimo para 120")).toEqual({ valor: 120 })
+  })
+
+  it("parseia editar último", () => {
+    expect(parseCorrecaoUltimo("editar último para 75")).toEqual({ valor: 75 })
   })
 
   it("rejeita valor inválido", () => {
@@ -231,13 +389,17 @@ describe("parseAjuda", () => {
 
 describe("parseExportacao", () => {
   it.each([
-    "exportar",
+    "csv",
     "exportar csv",
+    "baixar csv",
   ])("parseia %s como CSV", (mensagem) => {
     expect(parseExportacao(mensagem)).toEqual({ tipo: "exportacao", formato: "csv" })
   })
 
   it.each([
+    "exportar",
+    "planilha",
+    "excel",
     "baixar planilha",
     "gerar planilha",
     "minha planilha",

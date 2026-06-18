@@ -14,8 +14,11 @@ import {
 import { logger, logMensagem }                               from "./logger.js"
 import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
 import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
-import { fmtBetaFechado, fmtBoasVindas }                      from "./formatters.js"
-import { normalizarNomeUsuario }                              from "./validators.js"
+import {
+  fmtBetaFechado, fmtBoasVindas, fmtNomeInvalido, fmtNomeSalvo,
+  fmtSaudacaoUsuario, obterNomeExibicaoUsuario,
+} from "./formatters.js"
+import { normalizarNomeUsuario, parseSaudacao }               from "./validators.js"
 import { iniciarScheduler }                                  from "./scheduler.js"
 import { iniciarPainel }                                     from "./web/painel.js"
 import { verificarRateLimit }                                from "./rateLimiter.js"
@@ -352,6 +355,7 @@ export async function iniciarBot() {
 
       // ── Deduplicação ─────────────────────────────────────────────────────
       let usuario = getUsuario(usuarioId)
+      const saudacao = parseSaudacao(mensagem)
       if (usuario?.ultimo_msg_id === messageId) return
       if (usuario) atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
 
@@ -365,18 +369,12 @@ export async function iniciarBot() {
             aguardando_nome: 0,
             ultimo_msg_id: messageId,
           })
-          await enviar(sock, from,
-            `✅ Perfeito! Vou te chamar de *${nomeInicial}*.\n\nMande *ajuda* para ver todos os comandos.`)
+          await enviar(sock, from, fmtNomeSalvo(nomeInicial))
           return
         }
 
-        atualizarUsuario(usuarioId, { aguardando_nome: 0, ultimo_msg_id: messageId })
+        atualizarUsuario(usuarioId, { aguardando_nome: 1, ultimo_msg_id: messageId })
         await enviar(sock, from, fmtBoasVindas())
-        logMensagem(usuarioId, mensagem.split(" ")[0])
-        registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
-        await processarMensagem(sock, from, usuarioId, mensagem, {
-          pularBeta: grupo && !exigeParticipante,
-        })
         return
       }
 
@@ -385,23 +383,28 @@ export async function iniciarBot() {
         const nome = normalizarNomeUsuario(mensagem)
         if (nome) {
           atualizarUsuario(usuarioId, { nome, aguardando_nome: 0 })
-          await enviar(sock, from,
-            `✅ Perfeito! Vou te chamar de *${nome}*.\n\nMande *ajuda* para ver todos os comandos.`)
+          await enviar(sock, from, fmtNomeSalvo(nome))
           return
         }
 
-        atualizarUsuario(usuarioId, { nome: null, aguardando_nome: 0 })
-        logMensagem(usuarioId, mensagem.split(" ")[0])
-        registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
-        await processarMensagem(sock, from, usuarioId, mensagem, {
-          pularBeta: grupo && !exigeParticipante,
-        })
+        await enviar(sock, from, fmtNomeInvalido())
         return
       }
 
       // ── Limpar estado expirado ────────────────────────────────────────────
       limparEstadoExpirado(usuarioId)
       usuario = getUsuario(usuarioId)
+
+      if (saudacao) {
+        const nome = obterNomeExibicaoUsuario(usuario)
+        if (nome) {
+          await enviar(sock, from, fmtSaudacaoUsuario(nome))
+        } else {
+          atualizarUsuario(usuarioId, { aguardando_nome: 1 })
+          await enviar(sock, from, fmtBoasVindas())
+        }
+        return
+      }
 
       // ── Fluxo da caixinha ─────────────────────────────────────────────────
       if (usuario.aguardando_caixinha) {

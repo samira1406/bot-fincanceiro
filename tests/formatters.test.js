@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest"
 import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
   fmtAjuda, fmtBetaFechado, fmtBoasVindas, fmtMensagemNaoEntendida,
+  fmtNomeInvalido, fmtNomeSalvo, fmtSaudacaoUsuario,
+  fmtValorAmbiguo,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
   fmtHistoricoLancamentos,
@@ -30,20 +32,59 @@ describe("mensagens de ajuda e onboarding", () => {
   it("formata mensagem de ajuda com comandos principais", () => {
     const texto = fmtAjuda()
 
-    expect(texto).toContain("assistente financeiro")
+    expect(texto).toContain("MENU DO BOT FINANÇAS")
+    expect(texto).toContain("1. ")
+    expect(texto).toContain("2. ")
+    expect(texto).toContain("7. ")
     expect(texto).toContain("gastei 35 no mercado")
     expect(texto).toContain("recebi 2500 salario")
+    expect(texto).toContain("recebi 1250 em freelance")
+    expect(texto).toContain("planilha ou exportar planilha")
     expect(texto).toContain("exportar planilha")
     expect(texto).toContain("corrigir ultimo para 45")
     expect(texto).toContain("excluir ultimo")
   })
 
+  it("formata orientação para valor ambíguo", () => {
+    const texto = fmtValorAmbiguo(1250)
+
+    expect(texto).toContain("R$ 1.250,00")
+    expect(texto).toContain("1 - Entrada")
+    expect(texto).toContain("2 - Gasto")
+    expect(texto).toContain("recebi 1.250,00 freelance")
+  })
+
   it("formata mensagem de boas-vindas", () => {
     const texto = fmtBoasVindas()
 
-    expect(texto).toContain("Olá! Eu sou seu assistente financeiro")
+    expect(texto).toContain("Oi! Eu sou seu assistente financeiro")
+    expect(texto).toContain("como você gostaria que eu te chamasse")
+    expect(texto).toContain("Sadu")
+  })
+
+  it("formata confirmação de nome salvo", () => {
+    const texto = fmtNomeSalvo("Sadu")
+
+    expect(texto).toContain("Perfeito, Sadu")
     expect(texto).toContain("gastei 35 no mercado")
+    expect(texto).toContain("exportar planilha")
     expect(texto).toContain("ajuda")
+  })
+
+  it("formata saudação para usuário cadastrado", () => {
+    const texto = fmtSaudacaoUsuario("Sadu")
+
+    expect(texto).toContain("Oi, Sadu")
+    expect(texto).toContain("Como posso te ajudar hoje")
+    expect(texto).toContain("resumo")
+  })
+
+  it("pede novamente quando o nome é inválido", () => {
+    const texto = fmtNomeInvalido()
+
+    expect(texto).toContain("parece mais um comando do que um nome")
+    expect(texto).toContain("Como você gostaria que eu te chamasse")
+    expect(texto).toContain("Sadu")
   })
 
   it("formata mensagem de erro amigável", () => {
@@ -169,6 +210,10 @@ describe("fmtCategoriaAmigavel", () => {
     ["salario", "Salário"],
     ["mercado", "Mercado"],
     ["transporte", "Transporte"],
+    ["comissao", "Comissão"],
+    ["comissionamento", "Comissionamento"],
+    ["freelance", "Freelance"],
+    ["free", "Free"],
   ])("formata %s como %s", (categoria, esperado) => {
     expect(fmtCategoriaAmigavel(categoria)).toBe(esperado)
   })
