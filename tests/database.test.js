@@ -33,11 +33,13 @@ const {
   criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
   calcularGastoCategoriaNoPeriodo,
   getMesesComDados, gerarCSV, limparDadosFinanceirosUsuario,
-  mesAtual, temDadosExemploRecentes, db,
+  atualizarStatusFeedbackBeta, inserirFeedbackBeta, listarFeedbacksBeta,
+  mesAtual, obterResumoFeedbackBeta, temDadosExemploRecentes, db,
 } = await import("../src/database.js")
 
 beforeEach(() => {
   db.exec(`
+    DELETE FROM feedback_beta;
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
     DELETE FROM usuarios;
@@ -326,6 +328,68 @@ describe("Reset financeiro seguro", () => {
       tags: "dado_exemplo",
     })
     expect(temDadosExemploRecentes("demo-user")).toBe(true)
+  })
+})
+
+describe("Feedback estruturado do beta", () => {
+  beforeEach(() => {
+    criarUsuario("beta-feedback")
+    atualizarUsuario("beta-feedback", { nome: "Beta", aguardando_nome: 0 })
+  })
+
+  it("salva feedback, bug e avaliação com status novo", () => {
+    expect(inserirFeedbackBeta({
+      usuarioId: "beta-feedback",
+      tipo: "feedback",
+      texto: "Achei fácil",
+    })).toEqual(expect.any(Number))
+    expect(inserirFeedbackBeta({
+      usuarioId: "beta-feedback",
+      tipo: "bug",
+      texto: "Fechamento demorou",
+      contexto: "whatsapp",
+    })).toEqual(expect.any(Number))
+    expect(inserirFeedbackBeta({
+      usuarioId: "beta-feedback",
+      tipo: "avaliacao",
+      texto: "Gostei",
+      nota: 8,
+    })).toEqual(expect.any(Number))
+
+    expect(listarFeedbacksBeta()).toHaveLength(3)
+    expect(listarFeedbacksBeta().every(item => item.status === "novo")).toBe(true)
+    expect(obterResumoFeedbackBeta()).toEqual({
+      feedbacksNovos: 1,
+      bugsNovos: 1,
+      mediaNotas: 8,
+      total: 3,
+    })
+  })
+
+  it("não salva para usuário inexistente ou nota inválida", () => {
+    expect(inserirFeedbackBeta({
+      usuarioId: "nao-existe",
+      tipo: "feedback",
+      texto: "Teste",
+    })).toBeNull()
+    expect(inserirFeedbackBeta({
+      usuarioId: "beta-feedback",
+      tipo: "avaliacao",
+      texto: "Fora da faixa",
+      nota: 15,
+    })).toBeNull()
+  })
+
+  it("atualiza status somente para valores permitidos", () => {
+    const id = inserirFeedbackBeta({
+      usuarioId: "beta-feedback",
+      tipo: "bug",
+      texto: "Erro",
+    })
+
+    expect(atualizarStatusFeedbackBeta(id, "lido")).toBe(true)
+    expect(listarFeedbacksBeta()[0].status).toBe("lido")
+    expect(atualizarStatusFeedbackBeta(id, "apagado")).toBe(false)
   })
 })
 

@@ -135,6 +135,13 @@ Pode escrever de forma natural.
    criar dados de teste
    limpar meus dados
 
+9. 💬 *Beta e feedback*
+   começar teste
+   checklist beta
+   feedback achei fácil, mas...
+   reportar erro explique o problema
+   avaliar beta
+
 Se eu ficar em dúvida, vou perguntar antes de registrar.
 Para exemplos rápidos, mande: exemplos`
 }
@@ -248,6 +255,120 @@ Antes de começar, como você gostaria que eu te chamasse?
 
 Exemplo:
 Sadu`
+}
+
+export function fmtBoasVindasBeta() {
+  return `👋 Bem-vindo ao beta controlado do Bot Finanças!
+
+Você foi autorizado para testar antes do lançamento.
+
+Antes de começar, como você gostaria que eu te chamasse?
+
+Exemplo:
+Sadu
+
+Depois, mande:
+começar teste`
+}
+
+export function fmtTutorialBeta() {
+  return `🧪 *BEM-VINDO AO BETA DO BOT FINANÇAS*
+
+A ideia é simples:
+você registra gastos e entradas pelo WhatsApp e depois consulta seu resumo, planilha e fechamento.
+
+Para testar, faça nesta ordem:
+
+1. Registre uma entrada:
+recebi 2500 salario
+
+2. Registre alguns gastos:
+mercado 35
+uber 12,50
+ifood 45
+
+3. Consulte seus dados:
+resumo
+quanto gastei com mercado?
+fechamento
+
+4. Gere sua planilha:
+planilha
+
+Se algo não funcionar, mande:
+reportar erro [explique o problema]
+
+Se quiser dar opinião, mande:
+feedback [sua opinião]`
+}
+
+export function fmtChecklistBeta() {
+  return `✅ *CHECKLIST DE TESTE*
+
+[ ] 1. Registrar entrada
+Ex: recebi 2500 salario
+
+[ ] 2. Registrar gasto
+Ex: mercado 35
+
+[ ] 3. Ver resumo
+Ex: resumo
+
+[ ] 4. Fazer pergunta
+Ex: quanto gastei com mercado?
+
+[ ] 5. Gerar fechamento
+Ex: fechamento
+
+[ ] 6. Corrigir um lançamento
+Ex: alterar último para 45
+
+[ ] 7. Gerar planilha
+Ex: planilha
+
+Depois mande:
+avaliar beta`
+}
+
+export function fmtFeedbackRegistrado() {
+  return `Obrigado pelo feedback. Isso ajuda muito a melhorar o beta. ✅
+
+Seu feedback foi registrado.`
+}
+
+export function fmtFeedbackSemTexto() {
+  return "Me mande seu feedback na mesma mensagem. Ex: feedback achei fácil, mas faltou..."
+}
+
+export function fmtBugRegistrado() {
+  return `Obrigado por avisar. Registrei esse erro para análise. ✅
+
+Se puder, envie também:
+- o que você tentou fazer;
+- o que o bot respondeu;
+- o que você esperava.`
+}
+
+export function fmtBugSemTexto() {
+  return "Descreva o erro na mesma mensagem. Ex: reportar erro o fechamento não respondeu"
+}
+
+export function fmtAvaliacaoBetaNota() {
+  return "De 0 a 10, que nota você daria para o Bot Finanças hoje?"
+}
+
+export function fmtAvaliacaoBetaMotivo() {
+  return `Obrigado. E qual foi o principal motivo da sua nota?
+
+Pode responder em uma frase.`
+}
+
+export function fmtAvaliacaoBetaConcluida() {
+  return "Avaliação registrada. Obrigado por testar. ✅"
+}
+
+export function fmtAvaliacaoBetaCancelada() {
+  return "Tudo bem. Avaliação cancelada."
 }
 
 /**

@@ -23,7 +23,10 @@ import {
   getLancamentosGrupoPorMes,
   getSomaPorTipo,
   getTodosUsuarios,
+  atualizarStatusFeedbackBeta,
+  listarFeedbacksBeta,
   mesAtual,
+  obterResumoFeedbackBeta,
 } from "../database.js"
 import { logger } from "../logger.js"
 import { obterNomeExibicaoUsuario } from "../formatters.js"
@@ -996,6 +999,39 @@ app.post("/api/admin/backup", auth, async (req, res) => {
 
 app.get("/api/admin/events", auth, (req, res) => {
   res.json({ eventos: obterRuntimeState().eventos })
+})
+
+app.get("/api/admin/feedback", auth, (req, res) => {
+  const resumo = obterResumoFeedbackBeta()
+  const itens = listarFeedbacksBeta({ limite: 10 }).map(item => ({
+    id: item.id,
+    usuarioId: mascararIdentificadorBeta(item.usuario_id),
+    tipo: item.tipo,
+    texto: sanitizarValorPainel(item.texto),
+    nota: item.nota,
+    status: item.status,
+    contexto: sanitizarValorPainel(item.contexto),
+    createdAt: new Date(item.created_at).toISOString(),
+  }))
+
+  res.json({ resumo, itens })
+})
+
+app.post("/api/admin/feedback/:id/status", auth, (req, res) => {
+  const id = Number(req.params.id)
+  const status = String(req.body?.status ?? "")
+  if (!Number.isInteger(id) || id <= 0 ||
+      !["novo", "lido", "resolvido"].includes(status)) {
+    return res.status(400).json({ ok: false, erro: "dados_invalidos" })
+  }
+
+  const atualizado = atualizarStatusFeedbackBeta(id, status)
+  if (!atualizado) {
+    return res.status(404).json({ ok: false, erro: "nao_encontrado" })
+  }
+
+  registrarEvento("feedback_beta_status", { id, status })
+  return res.json({ ok: true, id, status })
 })
 
 // Rotas antigas mantidas para compatibilidade com ferramentas internas.

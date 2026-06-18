@@ -377,6 +377,107 @@ export function temDadosExemploRecentes(
   `).get(usuarioId, desde))
 }
 
+// ── Feedback do beta ─────────────────────────────────────────────────────────
+
+const TIPOS_FEEDBACK_BETA = new Set(["feedback", "bug", "avaliacao"])
+const STATUS_FEEDBACK_BETA = new Set(["novo", "lido", "resolvido"])
+
+/**
+ * Registra feedback estruturado de um beta tester.
+ * @param {{ usuarioId:string, tipo:"feedback"|"bug"|"avaliacao", texto?:string, nota?:number|null, contexto?:string }} dados
+ * @returns {number|null}
+ */
+export function inserirFeedbackBeta({
+  usuarioId,
+  tipo,
+  texto = "",
+  nota = null,
+  contexto = "",
+}) {
+  if (!getUsuario(usuarioId) || !TIPOS_FEEDBACK_BETA.has(tipo)) return null
+  if (tipo === "avaliacao" && (!Number.isInteger(nota) || nota < 0 || nota > 10)) {
+    return null
+  }
+
+  const info = db.prepare(`
+    INSERT INTO feedback_beta (
+      usuario_id, tipo, texto, nota, status, contexto
+    )
+    VALUES (?, ?, ?, ?, 'novo', ?)
+  `).run(
+    usuarioId,
+    tipo,
+    String(texto).trim(),
+    nota,
+    String(contexto).trim()
+  )
+  return info.lastInsertRowid
+}
+
+/**
+ * Lista feedbacks recentes, opcionalmente filtrados por status.
+ * @param {{ limite?:number, status?:string }} [opcoes]
+ * @returns {object[]}
+ */
+export function listarFeedbacksBeta({ limite = 10, status } = {}) {
+  const limiteSeguro = Math.min(Math.max(Number(limite) || 10, 1), 100)
+  if (status && !STATUS_FEEDBACK_BETA.has(status)) return []
+
+  if (status) {
+    return db.prepare(`
+      SELECT * FROM feedback_beta
+      WHERE status = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(status, limiteSeguro)
+  }
+
+  return db.prepare(`
+    SELECT * FROM feedback_beta
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
+  `).all(limiteSeguro)
+}
+
+/**
+ * Retorna métricas agregadas do beta sem detalhar usuários.
+ * @returns {object}
+ */
+export function obterResumoFeedbackBeta() {
+  const totais = db.prepare(`
+    SELECT
+      SUM(CASE WHEN tipo = 'feedback' AND status = 'novo' THEN 1 ELSE 0 END) AS feedbacks_novos,
+      SUM(CASE WHEN tipo = 'bug' AND status = 'novo' THEN 1 ELSE 0 END) AS bugs_novos,
+      AVG(CASE WHEN tipo = 'avaliacao' THEN nota END) AS media_notas,
+      COUNT(*) AS total
+    FROM feedback_beta
+  `).get()
+
+  return {
+    feedbacksNovos: totais?.feedbacks_novos ?? 0,
+    bugsNovos: totais?.bugs_novos ?? 0,
+    mediaNotas: totais?.media_notas === null || totais?.media_notas === undefined
+      ? null
+      : Math.round(totais.media_notas * 100) / 100,
+    total: totais?.total ?? 0,
+  }
+}
+
+/**
+ * Atualiza o status operacional de um feedback.
+ * @param {number} id
+ * @param {"novo"|"lido"|"resolvido"} status
+ * @returns {boolean}
+ */
+export function atualizarStatusFeedbackBeta(id, status) {
+  if (!STATUS_FEEDBACK_BETA.has(status)) return false
+  return db.prepare(`
+    UPDATE feedback_beta
+    SET status = ?
+    WHERE id = ?
+  `).run(status, id).changes === 1
+}
+
 // ── Agregações ────────────────────────────────────────────────────────────────
 
 /**

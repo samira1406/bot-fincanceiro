@@ -199,6 +199,7 @@ const {
 } = await import("../src/database.js")
 const { resetPendenciasLancamentoParaTestes } = await import("../src/pendingLancamentos.js")
 const { resetPendenciasEdicaoParaTestes } = await import("../src/pendingEdits.js")
+const { resetPendenciasBetaParaTestes } = await import("../src/pendingBeta.js")
 const { resetMenusPendentesParaTestes } = await import("../src/interactiveMessages.js")
 
 function prepararUsuario(id) {
@@ -227,6 +228,7 @@ async function entregarMensagem({
 beforeEach(async () => {
   resetPendenciasLancamentoParaTestes()
   resetPendenciasEdicaoParaTestes()
+  resetPendenciasBetaParaTestes()
   resetMenusPendentesParaTestes()
   botMock.handlers = {}
   botMock.sendMessage.mockClear()
@@ -244,6 +246,7 @@ beforeEach(async () => {
     exigirParticipanteAutorizado: true,
   }
   db.exec(`
+    DELETE FROM feedback_beta;
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
     DELETE FROM usuarios;
@@ -670,6 +673,142 @@ describe("bot - conversas privadas e grupos", () => {
 
     expect(botMock.sendMessage).not.toHaveBeenCalled()
     expect(getUsuario("5515888888888")).toBeNull()
+  })
+
+  it.each([
+    "feedback teste",
+    "começar teste",
+    "criar dados de teste",
+    "limpar meus dados",
+  ])("beta silencioso ignora %s sem resposta ou cadastro", async (texto) => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5515999999999"],
+    }
+
+    await entregarMensagem({
+      remoteJid: "5515888888888@s.whatsapp.net",
+      texto,
+      id: `msg-bloqueado-${texto}`,
+    })
+
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(botMock.relayMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5515888888888")).toBeNull()
+    expect(db.prepare("SELECT COUNT(*) AS total FROM feedback_beta").get().total)
+      .toBe(0)
+  })
+
+  it("primeiro contato autorizado recebe onboarding específico do beta", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5515999999999"],
+    }
+
+    await entregarMensagem({
+      remoteJid: "5515999999999@s.whatsapp.net",
+      texto: "oi",
+      id: "msg-onboarding-beta",
+    })
+
+    expect(getUsuario("5515999999999")).toMatchObject({
+      nome: null,
+      aguardando_nome: 1,
+    })
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("beta controlado")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("começar teste")
+  })
+
+  it("começar teste autorizado mostra tutorial mesmo no primeiro contato", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5515999999999"],
+    }
+
+    await entregarMensagem({
+      remoteJid: "5515999999999@s.whatsapp.net",
+      texto: "começar teste",
+      id: "msg-tutorial-beta",
+    })
+
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("BEM-VINDO AO BETA")
+    expect(getUsuario("5515999999999")).not.toBeNull()
+  })
+
+  it("fluxo completo autorizado percorre o caminho real sem cair no fallback", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5515999999999"],
+      jidsAutorizados: [],
+      gruposAutorizados: [],
+      exigirParticipanteAutorizado: true,
+    }
+    prepararUsuario("5515999999999")
+    atualizarUsuario("5515999999999", { nome: "Sadu" })
+
+    const passos = [
+      ["começar teste", "BEM-VINDO AO BETA"],
+      ["checklist beta", "CHECKLIST DE TESTE"],
+      ["feedback achei fácil de usar", "feedback foi registrado"],
+      ["reportar erro o fechamento demorou", "Registrei esse erro"],
+      ["avaliar beta", "0 a 10"],
+      ["8", "principal motivo"],
+      ["achei útil, mas falta áudio", "Avaliação registrada"],
+      ["extrato", "Você ainda não tem lançamentos registrados"],
+    ]
+
+    for (let indice = 0; indice < passos.length; indice++) {
+      const [texto, esperado] = passos[indice]
+      await entregarMensagem({
+        remoteJid: "5515999999999@s.whatsapp.net",
+        texto,
+        id: `msg-fluxo-beta-real-${indice}`,
+      })
+      const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
+      expect(resposta).toContain(esperado)
+      expect(resposta).not.toContain("ainda não entendi direitinho")
+    }
+
+    const registros = db.prepare(`
+      SELECT tipo, texto, nota FROM feedback_beta
+      WHERE usuario_id = ?
+      ORDER BY id ASC
+    `).all("5515999999999")
+    expect(registros).toEqual([
+      { tipo: "feedback", texto: "achei fácil de usar", nota: null },
+      { tipo: "bug", texto: "o fechamento demorou", nota: null },
+      {
+        tipo: "avaliacao",
+        texto: "achei útil, mas falta áudio",
+        nota: 8,
+      },
+    ])
+    expect(getUltimoLancamento("5515999999999")).toBeNull()
+  })
+
+  it("fluxo real também aceita comecar teste sem acento", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5515999999999"],
+    }
+    prepararUsuario("5515999999999")
+
+    await entregarMensagem({
+      remoteJid: "5515999999999@s.whatsapp.net",
+      texto: "comecar teste",
+      id: "msg-tutorial-sem-acento",
+    })
+
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("BEM-VINDO AO BETA")
   })
 
   it("beta silencioso não envia menu para número não autorizado", async () => {

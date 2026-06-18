@@ -73,6 +73,9 @@ const {
   resetPendenciasEdicaoParaTestes,
 } = await import("../src/pendingEdits.js")
 const {
+  resetPendenciasBetaParaTestes,
+} = await import("../src/pendingBeta.js")
+const {
   obterRuntimeState,
   resetRuntimeStateParaTestes,
 } = await import("../src/runtimeState.js")
@@ -100,9 +103,11 @@ function periodoAtualTeste() {
 beforeEach(() => {
   resetPendenciasLancamentoParaTestes()
   resetPendenciasEdicaoParaTestes()
+  resetPendenciasBetaParaTestes()
   resetMenusPendentesParaTestes()
   resetRuntimeStateParaTestes()
   db.exec(`
+    DELETE FROM feedback_beta;
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
     DELETE FROM usuarios;
@@ -183,6 +188,156 @@ describe("processarMensagem - beta fechado", () => {
     expect(sock.sendMessage).not.toHaveBeenCalled()
     expect(getUsuario(usuarioId)).toBeNull()
     expect(getUltimoLancamento(usuarioId)).toBeNull()
+  })
+
+  it.each([
+    "feedback teste",
+    "começar teste",
+    "criar dados de teste",
+    "limpar meus dados",
+  ])("não autorizado não recebe resposta nem grava dados com %s", async (mensagem) => {
+    configMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5511999999999"],
+    }
+
+    await processarMensagem(sock, "grupo", "5511888888888", mensagem)
+
+    expect(sock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5511888888888")).toBeNull()
+    expect(db.prepare(
+      "SELECT COUNT(*) AS total FROM feedback_beta"
+    ).get().total).toBe(0)
+  })
+})
+
+describe("processarMensagem - fluxo do beta tester", () => {
+  beforeEach(() => {
+    configMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5511999999999"],
+    }
+    prepararUsuario("5511999999999")
+  })
+
+  it.each([
+    "começar teste",
+    "iniciar beta",
+    "primeiro uso",
+    "tutorial",
+    "como testar",
+  ])("%s mostra tutorial para usuário autorizado", async (mensagem) => {
+    await processarMensagem(sock, "grupo", "5511999999999", mensagem)
+
+    expect(ultimaResposta()).toContain("BEM-VINDO AO BETA")
+    expect(ultimaResposta()).toContain("recebi 2500 salario")
+    expect(ultimaResposta()).toContain("reportar erro")
+  })
+
+  it.each([
+    "checklist beta",
+    "roteiro beta",
+    "teste guiado",
+    "passo a passo",
+  ])("%s mostra roteiro guiado", async (mensagem) => {
+    await processarMensagem(sock, "grupo", "5511999999999", mensagem)
+
+    expect(ultimaResposta()).toContain("CHECKLIST DE TESTE")
+    expect(ultimaResposta()).toContain("[ ] 7. Gerar planilha")
+  })
+
+  it("feedback salva conteúdo sem registrar despesa", async () => {
+    await processarMensagem(
+      sock,
+      "grupo",
+      "5511999999999",
+      "feedback mercado 35"
+    )
+
+    expect(ultimaResposta()).toContain("feedback foi registrado")
+    expect(getUltimoLancamento("5511999999999")).toBeNull()
+    expect(db.prepare("SELECT * FROM feedback_beta").get()).toMatchObject({
+      usuario_id: "5511999999999",
+      tipo: "feedback",
+      texto: "mercado 35",
+      status: "novo",
+    })
+  })
+
+  it("feedback sem texto pede mensagem completa", async () => {
+    await processarMensagem(sock, "grupo", "5511999999999", "feedback")
+
+    expect(ultimaResposta()).toContain("feedback achei fácil")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM feedback_beta").get().total)
+      .toBe(0)
+  })
+
+  it("reportar erro salva bug estruturado", async () => {
+    await processarMensagem(
+      sock,
+      "grupo",
+      "5511999999999",
+      "reportar erro fechamento bugou"
+    )
+
+    expect(ultimaResposta()).toContain("Registrei esse erro")
+    expect(db.prepare("SELECT * FROM feedback_beta").get()).toMatchObject({
+      tipo: "bug",
+      texto: "fechamento bugou",
+      contexto: "whatsapp",
+    })
+  })
+
+  it("bug sem texto pede descrição", async () => {
+    await processarMensagem(sock, "grupo", "5511999999999", "bug")
+
+    expect(ultimaResposta()).toContain("Descreva o erro")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM feedback_beta").get().total)
+      .toBe(0)
+  })
+
+  it("avaliação coleta nota e comentário sem criar lançamento", async () => {
+    await processarMensagem(sock, "grupo", "5511999999999", "avaliar beta")
+    expect(ultimaResposta()).toContain("0 a 10")
+
+    await processarMensagem(sock, "grupo", "5511999999999", "8")
+    expect(ultimaResposta()).toContain("principal motivo")
+    expect(getUltimoLancamento("5511999999999")).toBeNull()
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "5511999999999",
+      "gostei mas falta áudio"
+    )
+
+    expect(ultimaResposta()).toContain("Avaliação registrada")
+    expect(db.prepare("SELECT * FROM feedback_beta").get()).toMatchObject({
+      tipo: "avaliacao",
+      nota: 8,
+      texto: "gostei mas falta áudio",
+    })
+    expect(getUltimoLancamento("5511999999999")).toBeNull()
+  })
+
+  it("recusa nota fora de 0 a 10 e mantém avaliação pendente", async () => {
+    await processarMensagem(sock, "grupo", "5511999999999", "nota beta")
+    await processarMensagem(sock, "grupo", "5511999999999", "15")
+
+    expect(ultimaResposta()).toContain("nota inteira de 0 a 10")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM feedback_beta").get().total)
+      .toBe(0)
+  })
+
+  it("cancelar encerra avaliação sem salvar", async () => {
+    await processarMensagem(sock, "grupo", "5511999999999", "dar nota")
+    await processarMensagem(sock, "grupo", "5511999999999", "cancelar")
+
+    expect(ultimaResposta()).toContain("Avaliação cancelada")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM feedback_beta").get().total)
+      .toBe(0)
   })
 })
 

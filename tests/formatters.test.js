@@ -3,8 +3,13 @@ import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
   fmtAjuda, fmtBetaFechado, fmtBoasVindas, fmtMensagemNaoEntendida,
   fmtCancelamentoTotal, fmtComandoBloqueadoPorPendencia,
+  fmtAvaliacaoBetaCancelada, fmtAvaliacaoBetaConcluida,
+  fmtAvaliacaoBetaMotivo, fmtAvaliacaoBetaNota,
+  fmtBoasVindasBeta, fmtBugRegistrado, fmtBugSemTexto,
+  fmtChecklistBeta, fmtFeedbackRegistrado, fmtFeedbackSemTexto,
   fmtNomeAtualizado, fmtNomeInvalido, fmtNomeNecessarioAntes,
   fmtNomeSalvo, fmtSaudacaoUsuario,
+  fmtTutorialBeta,
   fmtMenuMetasTexto, fmtMenuPrincipalTexto,
   fmtFallbackMenuInterativo,
   fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
@@ -176,6 +181,37 @@ describe("mensagens de ajuda e onboarding", () => {
 
     expect(texto).toContain("Este bot está em beta fechado")
     expect(texto).toContain("liberar seu número")
+  })
+})
+
+describe("mensagens do beta controlado", () => {
+  it("apresenta onboarding e tutorial de teste", () => {
+    expect(fmtBoasVindasBeta()).toContain("beta controlado")
+    expect(fmtBoasVindasBeta()).toContain("começar teste")
+    expect(fmtTutorialBeta()).toContain("BEM-VINDO AO BETA")
+    expect(fmtTutorialBeta()).toContain("reportar erro")
+    expect(fmtTutorialBeta()).toContain("feedback")
+  })
+
+  it("mostra checklist objetivo", () => {
+    const texto = fmtChecklistBeta()
+    expect(texto).toContain("[ ] 1. Registrar entrada")
+    expect(texto).toContain("[ ] 7. Gerar planilha")
+    expect(texto).toContain("avaliar beta")
+  })
+
+  it("formata feedback e bug", () => {
+    expect(fmtFeedbackRegistrado()).toContain("feedback foi registrado")
+    expect(fmtFeedbackSemTexto()).toContain("feedback achei fácil")
+    expect(fmtBugRegistrado()).toContain("Registrei esse erro")
+    expect(fmtBugSemTexto()).toContain("reportar erro")
+  })
+
+  it("formata todas as etapas da avaliação", () => {
+    expect(fmtAvaliacaoBetaNota()).toContain("0 a 10")
+    expect(fmtAvaliacaoBetaMotivo()).toContain("principal motivo")
+    expect(fmtAvaliacaoBetaConcluida()).toContain("Avaliação registrada")
+    expect(fmtAvaliacaoBetaCancelada()).toContain("cancelada")
   })
 })
 

@@ -567,6 +567,102 @@ cancelar tudo
 Esse comando limpa pendências financeiras, edição, exclusão, reset,
 demonstração, caixinha e menu.
 
+## Beta Tester Controlado
+
+O acesso continua limitado pela whitelist quando `BETA_MODE=true`. Com
+`BETA_BLOCKED_REPLY=false`, contatos e grupos não autorizados são ignorados
+sem resposta, cadastro, onboarding ou gravação de feedback.
+
+### Tutorial e checklist
+
+```text
+começar teste
+iniciar beta
+sou beta
+primeiro uso
+tutorial
+como testar
+
+checklist beta
+roteiro beta
+teste guiado
+passo a passo
+```
+
+O tutorial orienta o beta tester a registrar entrada, gastos, consultar
+resumo/fechamento e gerar a planilha.
+
+### Feedback e bugs
+
+```text
+feedback achei fácil, mas queria áudio
+feedback: poderia melhorar o menu
+minha opinião é muito útil
+sugestão adicionar novos relatórios
+
+reportar erro o fechamento demorou
+bug a planilha não abriu
+erro o resumo ficou vazio
+deu erro ao editar
+```
+
+Mensagens sem descrição recebem orientação e textos acima de 1000 caracteres
+são recusados. Feedbacks nunca são interpretados como lançamentos financeiros.
+
+### Avaliação do beta
+
+```text
+avaliar beta
+nota beta
+avaliar bot
+dar nota
+```
+
+O bot solicita uma nota inteira de 0 a 10 e, depois, um comentário curto.
+`cancelar` encerra a avaliação sem salvar.
+
+Feedbacks, bugs e avaliações ficam na tabela SQLite `feedback_beta`, com
+`usuario_id`, tipo, texto, nota, status e data. O painel administrativo
+protegido pelo token disponibiliza:
+
+```text
+GET  /api/admin/feedback
+POST /api/admin/feedback/:id/status
+```
+
+Os identificadores retornados pela API são mascarados. Os status permitidos
+são `novo`, `lido` e `resolvido`.
+
+### Mensagens para convite manual
+
+Convite:
+
+```text
+Oi, [Nome]. Estou testando um bot financeiro pelo WhatsApp.
+
+A ideia é você registrar gastos e ganhos por mensagem, tipo:
+mercado 35
+recebi 2500 salario
+
+Depois ele mostra resumo, fechamento e planilha.
+Estou liberando para poucos beta testers antes de lançar.
+Quer testar comigo por alguns dias e me mandar feedback?
+```
+
+Depois de adicionar o número à whitelist:
+
+```text
+Pronto, liberei seu número no beta.
+
+Mande para o bot:
+começar teste
+
+Ele vai mostrar o passo a passo.
+```
+
+Essas mensagens são enviadas manualmente. O bot não envia convite nem resposta
+automática para contatos não autorizados.
+
 ---
 
 ## Deploy 24/7 Em VPS Com PM2

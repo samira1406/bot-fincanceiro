@@ -15,13 +15,15 @@ import { logger, logMensagem }                               from "./logger.js"
 import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
 import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
 import {
-  fmtBetaFechado, fmtBoasVindas, fmtNomeInvalido, fmtNomeNecessarioAntes,
+  fmtBetaFechado, fmtBoasVindas, fmtBoasVindasBeta,
+  fmtNomeInvalido, fmtNomeNecessarioAntes,
   fmtNomeSalvo,
   obterNomeExibicaoUsuario,
 } from "./formatters.js"
 import {
   isCancelamentoTotal, isComandoPrioritarioSistema,
-  normalizarNomeUsuario, parseComandoAlterarNome, parseSaudacao,
+  normalizarNomeUsuario, parseComandoBeta,
+  parseComandoAlterarNome, parseSaudacao,
 } from "./validators.js"
 import { iniciarScheduler }                                  from "./scheduler.js"
 import { iniciarPainel }                                     from "./web/painel.js"
@@ -36,6 +38,7 @@ import {
   sendMenuMessage,
 } from "./interactiveMessages.js"
 import { temPendenciaAcaoUsuario } from "./pendingEdits.js"
+import { temAvaliacaoBetaPendente } from "./pendingBeta.js"
 
 // ── Estado global ──────────────────────────────────────────────────────────────
 let tentativas   = 0
@@ -363,6 +366,7 @@ export async function iniciarBot() {
       const saudacao = parseSaudacao(mensagem)
       const alterarNome = parseComandoAlterarNome(mensagem)
       const comandoPrioritario = isComandoPrioritarioSistema(mensagem)
+      const comandoBeta = parseComandoBeta(mensagem)
       const cancelarTudo = isCancelamentoTotal(mensagem)
       if (usuario?.ultimo_msg_id === messageId) return
       if (usuario) atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
@@ -371,7 +375,7 @@ export async function iniciarBot() {
       if (!usuario) {
         criarUsuario(usuarioId)
 
-        if (alterarNome) {
+        if (alterarNome || comandoBeta) {
           atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
           await processarMensagem(sock, from, usuarioId, mensagem, {
             pularBeta: grupo && !exigeParticipante,
@@ -397,12 +401,13 @@ export async function iniciarBot() {
         }
 
         atualizarUsuario(usuarioId, { aguardando_nome: 1, ultimo_msg_id: messageId })
-        await enviar(sock, from, fmtBoasVindas())
+        await enviar(sock, from,
+          config.beta?.ativo ? fmtBoasVindasBeta() : fmtBoasVindas())
         return
       }
 
-      // Pendências de reset/edição têm prioridade sobre outros fluxos.
-      if (temPendenciaAcaoUsuario(usuarioId)) {
+      // Pendências de avaliação/reset/edição têm prioridade sobre outros fluxos.
+      if (temAvaliacaoBetaPendente(usuarioId) || temPendenciaAcaoUsuario(usuarioId)) {
         logMensagem(usuarioId, mensagem.split(" ")[0])
         registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
         await processarMensagem(sock, from, usuarioId, mensagem, {
@@ -423,7 +428,7 @@ export async function iniciarBot() {
 
       // ── Aguardando nome ───────────────────────────────────────────────────
       if (usuario.aguardando_nome) {
-        if (alterarNome || cancelarTudo) {
+        if (alterarNome || cancelarTudo || comandoBeta) {
           await processarMensagem(sock, from, usuarioId, mensagem, {
             pularBeta: grupo && !exigeParticipante,
           })
@@ -459,7 +464,8 @@ export async function iniciarBot() {
           })
         } else {
           atualizarUsuario(usuarioId, { aguardando_nome: 1 })
-          await enviar(sock, from, fmtBoasVindas())
+          await enviar(sock, from,
+            config.beta?.ativo ? fmtBoasVindasBeta() : fmtBoasVindas())
         }
         return
       }

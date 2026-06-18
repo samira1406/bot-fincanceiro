@@ -4,16 +4,26 @@ import {
   normalizarCategoriaPorPalavraChave,
 } from "./categoryRules.js"
 
-function normalizarComando(texto) {
-  return texto
+export function normalizarTextoComando(texto) {
+  return String(texto ?? "")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\u00A0/g, " ")
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
 }
 
+const normalizarComando = normalizarTextoComando
+
 function normalizarEspacos(texto) {
-  return texto.trim().toLowerCase().replace(/\s+/g, " ")
+  return String(texto ?? "")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\u00A0/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
 }
 
 function normalizarCategoriaInput(categoria) {
@@ -79,6 +89,8 @@ const palavrasIniciaisNomeInvalido = new Set([
   "excluir", "corrigir", "corrige", "alterar", "apagar", "deletar",
   "editar", "mudar", "limpar", "resetar", "zerar", "popular", "demo", "criar",
   "reset", "confirmar", "cancelar", "cancela", "sair", "voltar", "me",
+  "feedback", "sugestao", "bug", "erro", "tutorial", "checklist",
+  "roteiro", "avaliar", "nota", "primeiro", "iniciar", "passo",
   "entrada", "receita", "xlsx", "excel", "csv",
   ...agradecimentos,
   ...typosComandos.keys(),
@@ -183,7 +195,7 @@ export function normalizarNomeUsuario(nome) {
   if (parseSaudacao(candidato) || parseAjuda(candidato) || parseExportacao(candidato) ||
       parseCorrecaoUltimo(candidato) || parseMetaCategoria(candidato) ||
       parseAcaoLancamento(candidato) || parseComandoResetUsuario(candidato) ||
-      parseComandoDadosExemplo(candidato) ||
+      parseComandoDadosExemplo(candidato) || isComandoFluxoBeta(candidato) ||
       parseLancamento(candidato)) {
     return null
   }
@@ -574,6 +586,91 @@ export function parseComandoDadosExemplo(mensagem) {
   return comandos.has(normalizado) ? { tipo: "dados_exemplo" } : null
 }
 
+export function parseComandoTutorialBeta(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  const comandos = new Set([
+    "comecar teste",
+    "iniciar beta",
+    "sou beta",
+    "primeiro uso",
+    "tutorial",
+    "como testar",
+  ])
+  return comandos.has(normalizado) ? { tipo: "tutorial_beta" } : null
+}
+
+export function parseComandoChecklistBeta(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  const comandos = new Set([
+    "checklist beta",
+    "roteiro beta",
+    "teste guiado",
+    "passo a passo",
+  ])
+  return comandos.has(normalizado) ? { tipo: "checklist_beta" } : null
+}
+
+export function parseComandoAvaliacaoBeta(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  const comandos = new Set([
+    "avaliar beta",
+    "nota beta",
+    "avaliar bot",
+    "dar nota",
+  ])
+  return comandos.has(normalizado) ? { tipo: "avaliacao_beta" } : null
+}
+
+function extrairTextoAposPrefixo(texto, padrao) {
+  const match = String(texto ?? "").trim().match(padrao)
+  if (!match) return null
+  const conteudo = String(match[1] ?? "").trim()
+  if (!conteudo) return { texto: "", erro: "texto" }
+  if (conteudo.length > 1000) return { texto: "", erro: "tamanho" }
+  return { texto: conteudo }
+}
+
+/**
+ * Interpreta feedbacks e relatos de bug mantendo o texto original.
+ * @param {string} mensagem
+ * @returns {{ tipo:"feedback"|"bug", texto:string, erro?:string }|null}
+ */
+export function parseFeedbackBeta(mensagem) {
+  const texto = String(mensagem ?? "").trim()
+
+  const feedback = extrairTextoAposPrefixo(
+    texto,
+    /^(?:feedback\s*:?\s*|minha opini[aã]o (?:é|e)\s*:?\s*|sugest[aã]o\s*:?\s*)(.*)$/iu
+  )
+  if (feedback) return { tipo: "feedback", ...feedback }
+
+  const bug = extrairTextoAposPrefixo(
+    texto,
+    /^(?:reportar erro\s*:?\s*|deu erro\s*:?\s*|bug\s*:?\s*|erro\s*:?\s*)(.*)$/iu
+  )
+  if (bug) return { tipo: "bug", ...bug }
+
+  return null
+}
+
+/**
+ * Centraliza o reconhecimento de todos os comandos do fluxo beta.
+ * O texto original é preservado nos feedbacks; a normalização serve apenas
+ * para identificar aliases.
+ * @param {string} mensagem
+ * @returns {object|null}
+ */
+export function parseComandoBeta(mensagem) {
+  return parseComandoTutorialBeta(mensagem) ||
+    parseComandoChecklistBeta(mensagem) ||
+    parseComandoAvaliacaoBeta(mensagem) ||
+    parseFeedbackBeta(mensagem)
+}
+
+export function isComandoFluxoBeta(mensagem) {
+  return parseComandoBeta(mensagem) !== null
+}
+
 /**
  * Reconhece comandos para corrigir o nome salvo do usuário atual.
  * @param {string} mensagem
@@ -613,7 +710,8 @@ export function isComandoPrioritarioSistema(mensagem) {
     parseAcaoLancamento(mensagem) ||
     parseComandoResetUsuario(mensagem) ||
     parseComandoDadosExemplo(mensagem) ||
-    parseComandoAlterarNome(mensagem)
+    parseComandoAlterarNome(mensagem) ||
+    isComandoFluxoBeta(mensagem)
   )
 }
 

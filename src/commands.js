@@ -12,6 +12,7 @@ import {
   atualizarLancamentoDoUsuario, atualizarValorLancamento,
   deletarLancamentoDoUsuario, deletarLancamentosDesde,
   limparDadosFinanceirosUsuario, temDadosExemploRecentes,
+  inserirFeedbackBeta,
   getTodosUsuarios, getSomaPorTipo, definirMeta, getMeta,
   criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
   calcularGastoCategoriaNoPeriodo,
@@ -39,11 +40,16 @@ import {
   fmtResumoLancamentoEdicao,
   fmtCancelamentoTotal, fmtComandoBloqueadoPorPendencia,
   fmtNomeAtualizado,
+  fmtAvaliacaoBetaCancelada, fmtAvaliacaoBetaConcluida,
+  fmtAvaliacaoBetaMotivo, fmtAvaliacaoBetaNota,
+  fmtBugRegistrado, fmtBugSemTexto, fmtChecklistBeta,
+  fmtFeedbackRegistrado, fmtFeedbackSemTexto, fmtTutorialBeta,
 } from "./formatters.js"
 import {
   classificarMensagemDesconhecida,
   parseAcaoLancamento, parseAjuda, parseCategoriaLancamentoEdicao,
   parseComandoAlterarNome, parseComandoDadosExemplo, parseComandoResetUsuario,
+  parseComandoBeta,
   parseCorrecaoUltimo, parseDataLancamento, parseDescricaoLancamentoEdicao,
   parseExportacao, parseLancamento,
   isCancelamentoPendencia, isCancelamentoTotal, parseCategoriaLancamentoPendente,
@@ -69,6 +75,10 @@ import {
   obterPendenciaExclusao, obterPendenciaReset,
 } from "./pendingEdits.js"
 import { criarDadosExemploUsuario } from "./testData.js"
+import {
+  iniciarAvaliacaoBeta, limparAvaliacaoBetaPendente,
+  obterAvaliacaoBetaPendente, selecionarNotaAvaliacaoBeta,
+} from "./pendingBeta.js"
 import {
   executarConsultaFinanceira,
   formatarRespostaConsulta,
@@ -876,7 +886,133 @@ async function handleAlterarNomeUsuario(sock, from, usuarioId, comando) {
   await enviar(sock, from, fmtNomeAtualizado(comando.nome))
 }
 
+async function handleFeedbackBeta(sock, from, usuarioId, feedback) {
+  if (feedback.erro === "texto") {
+    await enviar(sock, from,
+      feedback.tipo === "bug" ? fmtBugSemTexto() : fmtFeedbackSemTexto())
+    return
+  }
+  if (feedback.erro === "tamanho") {
+    await enviar(sock, from,
+      "Sua mensagem ficou muito longa. Resuma em até 1000 caracteres.")
+    return
+  }
+
+  const id = inserirFeedbackBeta({
+    usuarioId,
+    tipo: feedback.tipo,
+    texto: feedback.texto,
+    contexto: "whatsapp",
+  })
+  if (!id) {
+    await enviar(sock, from, "Não consegui registrar agora. Tente novamente.")
+    return
+  }
+
+  registrarEvento("feedback_beta_registrado", { tipo: feedback.tipo })
+  await enviar(sock, from,
+    feedback.tipo === "bug" ? fmtBugRegistrado() : fmtFeedbackRegistrado())
+}
+
+async function handleIniciarAvaliacaoBeta(sock, from, usuarioId) {
+  iniciarAvaliacaoBeta(usuarioId)
+  await enviar(sock, from, fmtAvaliacaoBetaNota())
+}
+
+/**
+ * Despacha comandos do beta já reconhecidos pelo parser central.
+ * @returns {Promise<boolean>} true quando a mensagem foi consumida
+ */
+export async function processarComandoBeta(
+  sock,
+  from,
+  usuarioId,
+  comandoBeta
+) {
+  if (!comandoBeta) return false
+
+  if (comandoBeta.tipo === "tutorial_beta") {
+    limparMenuPendente(usuarioId)
+    await enviar(sock, from, fmtTutorialBeta())
+    return true
+  }
+
+  if (comandoBeta.tipo === "checklist_beta") {
+    limparMenuPendente(usuarioId)
+    await enviar(sock, from, fmtChecklistBeta())
+    return true
+  }
+
+  if (comandoBeta.tipo === "feedback" || comandoBeta.tipo === "bug") {
+    limparMenuPendente(usuarioId)
+    await handleFeedbackBeta(sock, from, usuarioId, comandoBeta)
+    return true
+  }
+
+  if (comandoBeta.tipo === "avaliacao_beta") {
+    limparMenuPendente(usuarioId)
+    await handleIniciarAvaliacaoBeta(sock, from, usuarioId)
+    return true
+  }
+
+  return false
+}
+
+async function processarAvaliacaoBetaPendente(
+  sock,
+  from,
+  usuarioId,
+  mensagem,
+  pendencia
+) {
+  if (isCancelamentoPendencia(mensagem)) {
+    limparAvaliacaoBetaPendente(usuarioId)
+    await enviar(sock, from, fmtAvaliacaoBetaCancelada())
+    return
+  }
+
+  if (pendencia.etapa === "nota") {
+    const texto = String(mensagem ?? "").trim()
+    const nota = /^\d{1,2}$/.test(texto) ? Number(texto) : NaN
+    if (!Number.isInteger(nota) || nota < 0 || nota > 10) {
+      await enviar(sock, from, "Envie uma nota inteira de 0 a 10, ou mande cancelar.")
+      return
+    }
+
+    selecionarNotaAvaliacaoBeta(usuarioId, nota)
+    await enviar(sock, from, fmtAvaliacaoBetaMotivo())
+    return
+  }
+
+  const comentario = String(mensagem ?? "").trim()
+  if (!comentario) {
+    await enviar(sock, from, "Conte em uma frase o principal motivo da sua nota.")
+    return
+  }
+  if (comentario.length > 1000) {
+    await enviar(sock, from, "Resuma o motivo em até 1000 caracteres.")
+    return
+  }
+
+  const id = inserirFeedbackBeta({
+    usuarioId,
+    tipo: "avaliacao",
+    nota: pendencia.nota,
+    texto: comentario,
+    contexto: "whatsapp",
+  })
+  if (!id) {
+    await enviar(sock, from, "Não consegui registrar agora. Tente novamente.")
+    return
+  }
+
+  limparAvaliacaoBetaPendente(usuarioId)
+  registrarEvento("feedback_beta_registrado", { tipo: "avaliacao" })
+  await enviar(sock, from, fmtAvaliacaoBetaConcluida())
+}
+
 async function handleCancelarTudo(sock, from, usuarioId) {
+  limparAvaliacaoBetaPendente(usuarioId)
   limparPendenciasAcoesUsuario(usuarioId)
   limparPendenciaLancamento(from, usuarioId)
   limparMenuPendente(usuarioId)
@@ -1117,18 +1253,32 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   const resetUsuario = parseComandoResetUsuario(mensagem)
   const dadosExemplo = parseComandoDadosExemplo(mensagem)
   const alterarNome = parseComandoAlterarNome(mensagem)
+  const comandoBeta = parseComandoBeta(mensagem)
   const cancelarTudo = isCancelamentoTotal(mensagem)
   const correcaoUltimo = parseCorrecaoUltimo(mensagem)
   const metaCategoria = parseMetaCategoria(mensagem)
   const comandoExato = comandos[lower]
   const temComando = Boolean(
     comandoExato || ajuda || exportacao || acaoLancamento ||
-    resetUsuario || dadosExemplo || alterarNome || cancelarTudo || correcaoUltimo ||
+    resetUsuario || dadosExemplo || alterarNome || comandoBeta ||
+    cancelarTudo || correcaoUltimo ||
     metaCategoria || partes[0] === "meta"
   )
 
   if (cancelarTudo) {
     await handleCancelarTudo(sock, from, usuarioId)
+    return
+  }
+
+  const avaliacaoPendente = obterAvaliacaoBetaPendente(usuarioId)
+  if (avaliacaoPendente) {
+    await processarAvaliacaoBetaPendente(
+      sock,
+      from,
+      usuarioId,
+      mensagem,
+      avaliacaoPendente
+    )
     return
   }
 
@@ -1279,6 +1429,8 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     await handleAlterarNomeUsuario(sock, from, usuarioId, alterarNome)
     return
   }
+
+  if (await processarComandoBeta(sock, from, usuarioId, comandoBeta)) return
 
   if (resetUsuario) {
     limparMenuPendente(usuarioId)

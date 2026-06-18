@@ -6,6 +6,8 @@ import {
   isComandoPrioritarioSistema, parseCategoriaLancamentoPendente,
   parseAcaoLancamento, parseAjuda, parseCategoriaLancamentoEdicao,
   parseComandoAlterarNome, parseComandoDadosExemplo, parseComandoResetUsuario,
+  parseComandoAvaliacaoBeta, parseComandoChecklistBeta,
+  parseComandoBeta, parseComandoTutorialBeta, parseFeedbackBeta,
   parseCorrecaoUltimo, parseDataLancamento,
   parseDescricaoLancamentoEdicao, parseExportacao, parseLancamento,
   parseMetaCategoria, parseSaudacao, parseTipoLancamentoPendente,
@@ -647,6 +649,81 @@ describe("correção de nome e prioridade", () => {
   it("reconhece cancelar tudo como comando prioritário", () => {
     expect(isCancelamentoTotal("cancelar tudo")).toBe(true)
     expect(isComandoPrioritarioSistema("cancelar tudo")).toBe(true)
+  })
+})
+
+describe("comandos do beta controlado", () => {
+  it.each([
+    "começar teste",
+    "iniciar beta",
+    "sou beta",
+    "primeiro uso",
+    "tutorial",
+    "como testar",
+  ])("entende tutorial %s", (mensagem) => {
+    expect(parseComandoTutorialBeta(mensagem)).toEqual({ tipo: "tutorial_beta" })
+    expect(parseComandoBeta(mensagem)).toEqual({ tipo: "tutorial_beta" })
+    expect(isComandoPrioritarioSistema(mensagem)).toBe(true)
+  })
+
+  it("normaliza espaços do WhatsApp e caracteres invisíveis", () => {
+    expect(parseComandoBeta("\u200B  começar\u00A0\u00A0teste  ")).toEqual({
+      tipo: "tutorial_beta",
+    })
+    expect(parseComandoBeta("checklist    beta")).toEqual({
+      tipo: "checklist_beta",
+    })
+  })
+
+  it.each([
+    "checklist beta",
+    "roteiro beta",
+    "teste guiado",
+    "passo a passo",
+  ])("entende checklist %s", (mensagem) => {
+    expect(parseComandoChecklistBeta(mensagem)).toEqual({ tipo: "checklist_beta" })
+  })
+
+  it.each([
+    "avaliar beta",
+    "nota beta",
+    "avaliar bot",
+    "dar nota",
+  ])("entende avaliação %s", (mensagem) => {
+    expect(parseComandoAvaliacaoBeta(mensagem)).toEqual({ tipo: "avaliacao_beta" })
+  })
+
+  it.each([
+    ["feedback achei fácil", "feedback", "achei fácil"],
+    ["feedback: poderia ter áudio", "feedback", "poderia ter áudio"],
+    ["minha opinião é muito útil", "feedback", "muito útil"],
+    ["sugestão melhorar o menu", "feedback", "melhorar o menu"],
+    ["reportar erro fechamento bugou", "bug", "fechamento bugou"],
+    ["bug planilha não abriu", "bug", "planilha não abriu"],
+    ["erro resumo vazio", "bug", "resumo vazio"],
+    ["deu erro ao editar", "bug", "ao editar"],
+  ])("interpreta %s", (mensagem, tipo, texto) => {
+    expect(parseFeedbackBeta(mensagem)).toEqual({ tipo, texto })
+    expect(parseComandoBeta(mensagem)).toEqual({ tipo, texto })
+  })
+
+  it("preserva acentos no texto original do feedback", () => {
+    expect(parseComandoBeta("feedback achei útil, mas falta áudio")).toEqual({
+      tipo: "feedback",
+      texto: "achei útil, mas falta áudio",
+    })
+  })
+
+  it.each([
+    ["feedback", "feedback"],
+    ["bug", "bug"],
+    ["reportar erro", "bug"],
+  ])("%s exige texto", (mensagem, tipo) => {
+    expect(parseFeedbackBeta(mensagem)).toEqual({
+      tipo,
+      texto: "",
+      erro: "texto",
+    })
   })
 })
 

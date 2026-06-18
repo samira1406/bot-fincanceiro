@@ -87,6 +87,7 @@ const {
   atualizarUsuario,
   criarUsuario,
   db,
+  inserirFeedbackBeta,
   inserirLancamento,
 } = await import("../src/database.js")
 const {
@@ -124,6 +125,7 @@ async function getJson(rota, headers = headersToken()) {
 
 beforeEach(async () => {
   db.exec(`
+    DELETE FROM feedback_beta;
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
     DELETE FROM usuarios;
@@ -257,6 +259,67 @@ describe("painel interno/admin", () => {
     expect(texto).toContain("55119****9999@s.whatsapp.net")
     expect(texto).not.toContain("5511999999999@s.whatsapp.net")
     expect(texto).not.toContain("120363000000000000@g.us")
+  })
+
+  it("feedback admin exige token, agrega métricas e mascara usuário", async () => {
+    criarUsuario("5511999999999")
+    atualizarUsuario("5511999999999", { nome: "Teste", aguardando_nome: 0 })
+    inserirFeedbackBeta({
+      usuarioId: "5511999999999",
+      tipo: "feedback",
+      texto: "Achei fácil",
+    })
+    inserirFeedbackBeta({
+      usuarioId: "5511999999999",
+      tipo: "bug",
+      texto: "Fechamento demorou",
+    })
+    inserirFeedbackBeta({
+      usuarioId: "5511999999999",
+      tipo: "avaliacao",
+      texto: "Gostei",
+      nota: 8,
+    })
+
+    const bloqueado = await getJson("/api/admin/feedback", {})
+    expect(bloqueado.res.status).toBe(401)
+
+    const { res, body } = await getJson("/api/admin/feedback")
+    const texto = JSON.stringify(body)
+    expect(res.status).toBe(200)
+    expect(body.resumo).toEqual({
+      feedbacksNovos: 1,
+      bugsNovos: 1,
+      mediaNotas: 8,
+      total: 3,
+    })
+    expect(body.itens).toHaveLength(3)
+    expect(texto).toContain("55119****9999")
+    expect(texto).not.toContain("5511999999999")
+  })
+
+  it("atualiza status de feedback por endpoint protegido", async () => {
+    criarUsuario("5511999999999")
+    const id = inserirFeedbackBeta({
+      usuarioId: "5511999999999",
+      tipo: "bug",
+      texto: "Erro",
+    })
+
+    const res = await fetch(`${baseUrl}/api/admin/feedback/${id}/status`, {
+      method: "POST",
+      headers: {
+        ...headersToken(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status: "resolvido" }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toMatchObject({ ok: true, id, status: "resolvido" })
+    expect(db.prepare("SELECT status FROM feedback_beta WHERE id = ?").get(id).status)
+      .toBe("resolvido")
   })
 
   it("painel HTML carrega sem expor token, DASHBOARD_TOKEN nem .env", async () => {
