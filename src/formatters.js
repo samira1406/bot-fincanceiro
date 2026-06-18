@@ -123,10 +123,17 @@ Pode escrever de forma natural.
    Exemplo: meta mercado 600
 
 7. ✏️ *Corrigir ou excluir*
-   Ajusta ou remove o último lançamento.
+   Ajusta ou remove lançamentos recentes.
    Exemplos:
+   editar lançamento
    corrigir ultimo para 45
+   alterar ultimo para 45
+   excluir lançamento
    excluir ultimo
+
+8. 🧪 *Testes seguros*
+   criar dados de teste
+   limpar meus dados
 
 Se eu ficar em dúvida, vou perguntar antes de registrar.
 Para exemplos rápidos, mande: exemplos`
@@ -296,6 +303,25 @@ Exemplo:
 Sadu`
 }
 
+export function fmtNomeNecessarioAntes() {
+  return `Antes de continuar, preciso saber como posso te chamar. 🙂
+
+Exemplo:
+Sadu`
+}
+
+export function fmtNomeAtualizado(nome) {
+  return `Pronto, vou te chamar de ${nome} a partir de agora.`
+}
+
+export function fmtComandoBloqueadoPorPendencia() {
+  return `Você tem um lançamento pendente. Mande cancelar para sair dele antes de continuar.`
+}
+
+export function fmtCancelamentoTotal() {
+  return "Cancelei as ações pendentes. Nenhum dado foi apagado."
+}
+
 /**
  * Mensagem para quando o bot não entende o texto recebido.
  * @returns {string}
@@ -354,14 +380,14 @@ resumo`
     const tipo = pendencia.tipo === "entrada" ? "entrada" : "gasto"
 
     if (pendencia.etapa === "categoria") {
-      return `Ainda preciso da categoria para registrar esse ${tipo} de R$ ${fmtValor(pendencia.valor)}. 🙂
+      return `Você ainda tem um lançamento pendente: ${tipo} de R$ ${fmtValor(pendencia.valor)}. 🙂
 
-Exemplos:
+Para concluir, envie apenas a categoria:
 mercado
 aluguel
 internet
 
-Ou mande cancelar para desistir.`
+Ou mande cancelar para começar outro lançamento.`
     }
 
     return `Ainda preciso saber se o valor R$ ${fmtValor(pendencia.valor)} é entrada ou gasto. 🙂
@@ -483,6 +509,13 @@ const categoriasAmigaveis = {
   internet:    "Internet",
   aluguel:     "Aluguel",
   poupanca:    "Poupança",
+  moradia:     "Moradia",
+  saude:       "Saúde",
+  pets:        "Pets",
+  lazer:       "Lazer",
+  assinaturas: "Assinaturas",
+  freelance:   "Freelance",
+  servico:     "Serviço",
 }
 
 const descricoesAmigaveis = {
@@ -529,6 +562,90 @@ function fmtDataCurta(timestamp) {
     day: "2-digit",
     month: "2-digit",
   })
+}
+
+function inicioDia(data) {
+  const d = new Date(data)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/**
+ * Exibe hoje, ontem ou uma data curta para os fluxos de edição.
+ * @param {number} timestamp
+ * @param {Date} [agora]
+ * @returns {string}
+ */
+export function fmtDataLancamentoEdicao(timestamp, agora = new Date()) {
+  const diaLancamento = inicioDia(timestamp)
+  const hoje = inicioDia(agora)
+  if (diaLancamento === hoje) return "hoje"
+
+  const ontem = new Date(hoje)
+  ontem.setDate(ontem.getDate() - 1)
+  if (diaLancamento === ontem.getTime()) return "ontem"
+
+  return fmtDataCurta(timestamp)
+}
+
+/**
+ * Resume um lançamento para seleção e confirmação.
+ * @param {object} lancamento
+ * @param {Date} [agora]
+ * @returns {string}
+ */
+export function fmtResumoLancamentoEdicao(lancamento, agora = new Date()) {
+  const tipo = lancamento.tipo === "entrada" ? "Entrada" : "Gasto"
+  return `${tipo} - R$ ${fmtValor(lancamento.valor)} - ` +
+    `${fmtCategoriaAmigavel(lancamento.categoria)} - ` +
+    `${fmtDataLancamentoEdicao(lancamento.criado_em, agora)}`
+}
+
+/**
+ * Lista lançamentos recentes para editar ou excluir.
+ * @param {object[]} lancamentos
+ * @param {"editar"|"excluir"} [modo]
+ * @returns {string}
+ */
+export function fmtListaLancamentosEdicao(lancamentos, modo = "editar") {
+  if (!lancamentos.length) {
+    return "Você ainda não tem lançamentos para editar."
+  }
+
+  const linhas = lancamentos.map((item, indice) =>
+    `${indice + 1}. ${fmtResumoLancamentoEdicao(item)}`
+  )
+  const acao = modo === "excluir" ? "excluir" : "editar"
+
+  return `Escolha qual lançamento quer ${acao}:\n\n${linhas.join("\n")}\n\n` +
+    "Responda com o número do lançamento.\nOu mande cancelar."
+}
+
+/**
+ * Mostra os campos editáveis de um lançamento selecionado.
+ * @param {object} lancamento
+ * @returns {string}
+ */
+export function fmtMenuEdicaoLancamento(lancamento) {
+  return `Você escolheu:\n${fmtResumoLancamentoEdicao(lancamento)}\n\n` +
+    `O que deseja fazer?\n` +
+    `1 - Corrigir valor\n` +
+    `2 - Corrigir categoria\n` +
+    `3 - Corrigir tipo\n` +
+    `4 - Corrigir descrição\n` +
+    `5 - Corrigir data\n` +
+    `6 - Excluir\n` +
+    `7 - Cancelar`
+}
+
+/**
+ * Confirma visualmente o item antes da exclusão.
+ * @param {object} lancamento
+ * @returns {string}
+ */
+export function fmtConfirmacaoExclusaoLancamento(lancamento) {
+  return `Tem certeza que deseja excluir?\n${fmtResumoLancamentoEdicao(lancamento)}\n\n` +
+    `Responda:\n1 - Sim, excluir\n2 - Cancelar`
 }
 
 /**

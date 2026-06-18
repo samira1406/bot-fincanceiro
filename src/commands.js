@@ -8,12 +8,14 @@ import { logger }        from "./logger.js"
 import {
   getUsuario, atualizarUsuario, inserirLancamento,
   getLancamentosPorMes, getGastosPorCategoria,
-  getUltimosLancamentos, getUltimoLancamento,
-  atualizarValorLancamento, deletarLancamentoDoUsuario, deletarLancamentosDesde,
+  getUltimosLancamentos, getUltimoLancamento, getLancamentoDoUsuario,
+  atualizarLancamentoDoUsuario, atualizarValorLancamento,
+  deletarLancamentoDoUsuario, deletarLancamentosDesde,
+  limparDadosFinanceirosUsuario, temDadosExemploRecentes,
   getTodosUsuarios, getSomaPorTipo, definirMeta, getMeta,
   criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
   calcularGastoCategoriaNoPeriodo,
-  mesAtual,
+  mesAtual, db,
 } from "./database.js"
 import {
   gerarCSVLancamentos, gerarXlsxFinanceiro,
@@ -32,11 +34,19 @@ import {
   fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
   fmtListaMetasCategoria, fmtProgressoMetaCategoria,
   fmtMetaCategoriaUltrapassada,
+  fmtConfirmacaoExclusaoLancamento, fmtDataLancamentoEdicao,
+  fmtListaLancamentosEdicao, fmtMenuEdicaoLancamento,
+  fmtResumoLancamentoEdicao,
+  fmtCancelamentoTotal, fmtComandoBloqueadoPorPendencia,
+  fmtNomeAtualizado,
 } from "./formatters.js"
 import {
   classificarMensagemDesconhecida,
-  parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
-  isCancelamentoPendencia, parseCategoriaLancamentoPendente,
+  parseAcaoLancamento, parseAjuda, parseCategoriaLancamentoEdicao,
+  parseComandoAlterarNome, parseComandoDadosExemplo, parseComandoResetUsuario,
+  parseCorrecaoUltimo, parseDataLancamento, parseDescricaoLancamentoEdicao,
+  parseExportacao, parseLancamento,
+  isCancelamentoPendencia, isCancelamentoTotal, parseCategoriaLancamentoPendente,
   parseMetaCategoria, parseTipoLancamentoPendente,
   parseValorAmbiguo, parseValorSimples,
 } from "./validators.js"
@@ -47,7 +57,27 @@ import {
 import {
   limparMenuPendente, obterMenuPendente, sendMenuMessage,
 } from "./interactiveMessages.js"
-import { registrarFallbackAcionado } from "./runtimeState.js"
+import { registrarEvento, registrarFallbackAcionado } from "./runtimeState.js"
+import {
+  atualizarPendenciaEdicao,
+  iniciarPendenciaDemo, iniciarPendenciaEdicao,
+  iniciarPendenciaExclusao, iniciarPendenciaReset,
+  limparPendenciaDemo, limparPendenciaEdicao,
+  limparPendenciaExclusao, limparPendenciaReset,
+  limparPendenciasAcoesUsuario,
+  obterPendenciaDemo, obterPendenciaEdicao,
+  obterPendenciaExclusao, obterPendenciaReset,
+} from "./pendingEdits.js"
+import { criarDadosExemploUsuario } from "./testData.js"
+import {
+  executarConsultaFinanceira,
+  formatarRespostaConsulta,
+  parseConsultaFinanceira,
+} from "./financeQueries.js"
+import {
+  formatarFechamentoMensal,
+  gerarFechamentoMensal,
+} from "./insights.js"
 
 // ── Envio seguro ──────────────────────────────────────────────────────────────
 
@@ -367,6 +397,497 @@ async function handleListarMetasCategoria(sock, from, usuarioId) {
   await enviar(sock, from, fmtListaMetasCategoria(metas))
 }
 
+async function handleConsultaFinanceira(sock, from, usuarioId, consulta) {
+  const resultado = executarConsultaFinanceira(db, usuarioId, consulta)
+  await enviar(sock, from, formatarRespostaConsulta(resultado))
+}
+
+async function handleFechamentoMensal(sock, from, usuarioId) {
+  const agora = new Date()
+  const lancamentos = getLancamentosPorMes(usuarioId, mesAtual())
+  const metas = listarMetasCategoria(
+    usuarioId,
+    agora.getMonth() + 1,
+    agora.getFullYear()
+  )
+  const fechamento = gerarFechamentoMensal({ lancamentos, metas, agora })
+  await enviar(sock, from, formatarFechamentoMensal(fechamento))
+}
+
+function normalizarRespostaFluxo(mensagem) {
+  return String(mensagem ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+}
+
+function obterItemRecentePorIndice(usuarioId, indice) {
+  const itens = getUltimosLancamentos(usuarioId, 5)
+  return {
+    itens,
+    selecionado: Number.isInteger(indice) && indice >= 1
+      ? itens[indice - 1] ?? null
+      : null,
+  }
+}
+
+async function iniciarConfirmacaoExclusao(sock, from, usuarioId, lancamento) {
+  iniciarPendenciaExclusao(usuarioId, {
+    lancamentoId: lancamento.id,
+    snapshotBefore: lancamento,
+  })
+  await enviar(sock, from, fmtConfirmacaoExclusaoLancamento(lancamento))
+}
+
+async function handleIniciarEdicaoUltimo(sock, from, usuarioId) {
+  const ultimo = getUltimoLancamento(usuarioId)
+  if (!ultimo) {
+    await enviar(sock, from, "Não encontrei nenhum lançamento para editar.")
+    return
+  }
+
+  iniciarPendenciaEdicao(usuarioId, {
+    etapa: "escolher_acao",
+    lancamentoId: ultimo.id,
+    snapshotBefore: ultimo,
+  })
+  await enviar(sock, from,
+    `Encontrei seu último lançamento:\n` +
+    `1. ${fmtResumoLancamentoEdicao(ultimo)}\n\n` +
+    `O que você quer corrigir?\n` +
+    `1 - Valor\n` +
+    `2 - Categoria\n` +
+    `3 - Tipo\n` +
+    `4 - Descrição\n` +
+    `5 - Data\n` +
+    `6 - Excluir\n` +
+    `7 - Cancelar`)
+}
+
+async function handleIniciarEdicaoLista(sock, from, usuarioId, modo = "editar") {
+  const itens = getUltimosLancamentos(usuarioId, 5)
+  if (!itens.length) {
+    await enviar(sock, from, "Você ainda não tem lançamentos para editar.")
+    return
+  }
+
+  iniciarPendenciaEdicao(usuarioId, {
+    etapa: "escolher_item",
+    modo,
+    itens: itens.map(item => item.id),
+  })
+  await enviar(sock, from, fmtListaLancamentosEdicao(itens, modo))
+}
+
+async function handleIniciarExclusaoUltimo(sock, from, usuarioId) {
+  const ultimo = getUltimoLancamento(usuarioId)
+  if (!ultimo) {
+    await enviar(sock, from, "Você ainda não tem lançamentos para excluir.")
+    return
+  }
+  await iniciarConfirmacaoExclusao(sock, from, usuarioId, ultimo)
+}
+
+async function handleIniciarExclusaoIndice(sock, from, usuarioId, indice) {
+  if (!indice) {
+    await handleIniciarEdicaoLista(sock, from, usuarioId, "excluir")
+    return
+  }
+
+  const { itens, selecionado } = obterItemRecentePorIndice(usuarioId, indice)
+  if (!selecionado) {
+    await enviar(sock, from, itens.length
+      ? `Escolha um número entre 1 e ${itens.length}.`
+      : "Você ainda não tem lançamentos para excluir.")
+    return
+  }
+
+  await iniciarConfirmacaoExclusao(sock, from, usuarioId, selecionado)
+}
+
+function prepararCampoEdicao(campo, valorBruto, lancamento) {
+  if (campo === "valor") {
+    const valor = typeof valorBruto === "number"
+      ? valorBruto
+      : parseValorSimples(valorBruto)
+    return valor ? { campos: { valor }, valor } : null
+  }
+
+  if (campo === "categoria") {
+    const categoria = parseCategoriaLancamentoEdicao(valorBruto, lancamento.tipo)
+    return categoria ? { campos: { categoria }, categoria } : null
+  }
+
+  if (campo === "tipo") {
+    const tipo = parseTipoLancamentoPendente(valorBruto)
+    return tipo ? { campos: { tipo }, tipo } : null
+  }
+
+  if (campo === "descricao") {
+    const nome = parseDescricaoLancamentoEdicao(valorBruto)
+    return nome ? { campos: { nome }, nome } : null
+  }
+
+  if (campo === "data") {
+    const data = parseDataLancamento(valorBruto)
+    return data ? { campos: { criadoEm: data.criadoEm }, data } : null
+  }
+
+  return null
+}
+
+function formatarResultadoEdicao(campo, preparado, atualizado, anterior) {
+  if (campo === "valor") {
+    return `Valor atualizado para R$ ${fmtValor(preparado.valor)}.\n\n` +
+      `Antes: R$ ${fmtValor(anterior.valor)}\n` +
+      `Agora: R$ ${fmtValor(preparado.valor)}`
+  }
+  if (campo === "categoria") {
+    return `Categoria atualizada para ${fmtCategoriaAmigavel(atualizado.categoria)}.`
+  }
+  if (campo === "tipo") {
+    return `Tipo atualizado para ${atualizado.tipo === "entrada" ? "Entrada" : "Gasto"}.`
+  }
+  if (campo === "descricao") return "Descrição atualizada."
+  if (campo === "data") {
+    return `Data atualizada para ${fmtDataLancamentoEdicao(atualizado.criado_em)}.`
+  }
+  return "Lançamento atualizado."
+}
+
+function mensagemCampoInvalido(campo) {
+  const mensagens = {
+    valor: "Valor inválido. Envie algo como: 18,90",
+    categoria: "Categoria inválida. Envie algo como: mercado ou Uber",
+    tipo: "Responda 1 para Entrada ou 2 para Gasto.",
+    descricao: "Descrição inválida. Envie uma descrição curta.",
+    data: "Data inválida. Use: hoje, ontem, 18/06 ou 18/06/2026",
+  }
+  return mensagens[campo] ?? "Não consegui entender a alteração."
+}
+
+async function aplicarEdicaoLancamento(
+  sock,
+  from,
+  usuarioId,
+  lancamento,
+  campo,
+  valorBruto
+) {
+  const preparado = prepararCampoEdicao(campo, valorBruto, lancamento)
+  if (!preparado) {
+    await enviar(sock, from, mensagemCampoInvalido(campo))
+    return false
+  }
+
+  const atualizado = atualizarLancamentoDoUsuario(
+    usuarioId,
+    lancamento.id,
+    preparado.campos
+  )
+  if (!atualizado) {
+    await enviar(sock, from, "Não encontrei esse lançamento para atualizar.")
+    return false
+  }
+
+  registrarEvento("lancamento_editado", { campo })
+  await enviar(sock, from,
+    formatarResultadoEdicao(campo, preparado, atualizado, lancamento))
+  return true
+}
+
+async function handleAcaoLancamento(sock, from, usuarioId, acao) {
+  if (acao.tipo === "editar_lista") {
+    await handleIniciarEdicaoLista(sock, from, usuarioId)
+    return
+  }
+  if (acao.tipo === "editar_ultimo_menu") {
+    await handleIniciarEdicaoUltimo(sock, from, usuarioId)
+    return
+  }
+  if (acao.tipo === "excluir_ultimo") {
+    await handleIniciarExclusaoUltimo(sock, from, usuarioId)
+    return
+  }
+  if (acao.tipo === "excluir_lista") {
+    await handleIniciarExclusaoIndice(sock, from, usuarioId, acao.indice)
+    return
+  }
+  if (acao.tipo === "editar_ultimo_direto") {
+    const ultimo = getUltimoLancamento(usuarioId)
+    if (!ultimo) {
+      await enviar(sock, from, "Não encontrei nenhum lançamento para corrigir.")
+      return
+    }
+    await aplicarEdicaoLancamento(
+      sock,
+      from,
+      usuarioId,
+      ultimo,
+      acao.campo,
+      acao.valor
+    )
+  }
+}
+
+function campoEscolhidoEdicao(mensagem) {
+  const normalizado = normalizarRespostaFluxo(mensagem)
+  const opcoes = {
+    "1": "valor",
+    "valor": "valor",
+    "corrigir valor": "valor",
+    "2": "categoria",
+    "categoria": "categoria",
+    "corrigir categoria": "categoria",
+    "3": "tipo",
+    "tipo": "tipo",
+    "corrigir tipo": "tipo",
+    "4": "descricao",
+    "descricao": "descricao",
+    "corrigir descricao": "descricao",
+    "5": "data",
+    "data": "data",
+    "corrigir data": "data",
+  }
+  return opcoes[normalizado] ?? null
+}
+
+function promptCampoEdicao(campo) {
+  const prompts = {
+    valor: "Qual é o novo valor?",
+    categoria: "Qual é a nova categoria?",
+    tipo: "Este lançamento deve ser:\n1 - Entrada\n2 - Gasto",
+    descricao: "Qual descrição você quer usar?",
+    data: "Qual é a nova data?\nExemplos: hoje, ontem, 18/06, 18/06/2026",
+  }
+  return prompts[campo]
+}
+
+async function processarPendenciaEdicao(
+  sock,
+  from,
+  usuarioId,
+  mensagem,
+  pendencia
+) {
+  if (isCancelamentoPendencia(mensagem) || normalizarRespostaFluxo(mensagem) === "7") {
+    limparPendenciaEdicao(usuarioId)
+    await enviar(sock, from, "Tudo certo. Edição cancelada.")
+    return
+  }
+
+  if (pendencia.etapa === "escolher_item") {
+    const indice = Number(normalizarRespostaFluxo(mensagem))
+    const id = Number.isInteger(indice) && indice >= 1
+      ? pendencia.itens?.[indice - 1]
+      : null
+    const lancamento = id ? getLancamentoDoUsuario(usuarioId, id) : null
+
+    if (!lancamento) {
+      await enviar(sock, from,
+        `Escolha um número entre 1 e ${pendencia.itens?.length ?? 0}, ou mande cancelar.`)
+      return
+    }
+
+    if (pendencia.modo === "excluir") {
+      limparPendenciaEdicao(usuarioId)
+      await iniciarConfirmacaoExclusao(sock, from, usuarioId, lancamento)
+      return
+    }
+
+    atualizarPendenciaEdicao(usuarioId, {
+      etapa: "escolher_acao",
+      lancamentoId: lancamento.id,
+      snapshotBefore: lancamento,
+    })
+    await enviar(sock, from, fmtMenuEdicaoLancamento(lancamento))
+    return
+  }
+
+  const lancamento = getLancamentoDoUsuario(usuarioId, pendencia.lancamentoId)
+  if (!lancamento) {
+    limparPendenciaEdicao(usuarioId)
+    await enviar(sock, from, "Esse lançamento não está mais disponível.")
+    return
+  }
+
+  if (pendencia.etapa === "escolher_acao") {
+    const resposta = normalizarRespostaFluxo(mensagem)
+    if (resposta === "6" || ["excluir", "apagar", "deletar"].includes(resposta)) {
+      limparPendenciaEdicao(usuarioId)
+      await iniciarConfirmacaoExclusao(sock, from, usuarioId, lancamento)
+      return
+    }
+
+    const campo = campoEscolhidoEdicao(mensagem)
+    if (!campo) {
+      await enviar(sock, from, fmtMenuEdicaoLancamento(lancamento))
+      return
+    }
+
+    atualizarPendenciaEdicao(usuarioId, {
+      etapa: "informar_campo",
+      campoSelecionado: campo,
+    })
+    await enviar(sock, from, promptCampoEdicao(campo))
+    return
+  }
+
+  if (pendencia.etapa === "informar_campo") {
+    const atualizado = await aplicarEdicaoLancamento(
+      sock,
+      from,
+      usuarioId,
+      lancamento,
+      pendencia.campoSelecionado,
+      mensagem
+    )
+    if (atualizado) limparPendenciaEdicao(usuarioId)
+  }
+}
+
+async function processarPendenciaExclusao(
+  sock,
+  from,
+  usuarioId,
+  mensagem,
+  pendencia
+) {
+  const resposta = normalizarRespostaFluxo(mensagem)
+  if (isCancelamentoPendencia(mensagem) || ["2", "nao", "não"].includes(resposta)) {
+    limparPendenciaExclusao(usuarioId)
+    await enviar(sock, from, "Tudo certo. Nada foi excluído.")
+    return
+  }
+
+  const lancamento = getLancamentoDoUsuario(usuarioId, pendencia.lancamentoId)
+  if (!lancamento) {
+    limparPendenciaExclusao(usuarioId)
+    await enviar(sock, from, "Esse lançamento não está mais disponível.")
+    return
+  }
+
+  if (!["1", "sim", "sim excluir", "confirmar"].includes(resposta)) {
+    await enviar(sock, from, fmtConfirmacaoExclusaoLancamento(lancamento))
+    return
+  }
+
+  const excluido = deletarLancamentoDoUsuario(usuarioId, lancamento.id)
+  limparPendenciaExclusao(usuarioId)
+  registrarEvento("lancamento_excluido", { confirmado: excluido })
+  await enviar(sock, from, excluido
+    ? "Lançamento excluído com sucesso."
+    : "Não encontrei esse lançamento para excluir.")
+}
+
+async function handleIniciarResetUsuario(sock, from, usuarioId) {
+  limparPendenciasAcoesUsuario(usuarioId)
+  iniciarPendenciaReset(usuarioId)
+  await enviar(sock, from,
+    `Atenção: isso vai apagar seus lançamentos, metas e dados financeiros de teste desta conta.\n\n` +
+    `Essa ação não apaga outros usuários.\n\n` +
+    `Para confirmar, responda exatamente:\nCONFIRMAR RESET\n\n` +
+    `Para cancelar, mande:\ncancelar`)
+}
+
+async function processarPendenciaReset(
+  sock,
+  from,
+  usuarioId,
+  mensagem,
+  pendencia
+) {
+  if (isCancelamentoPendencia(mensagem)) {
+    limparPendenciaReset(usuarioId)
+    await enviar(sock, from, "Reset cancelado. Nada foi apagado.")
+    return
+  }
+
+  if (String(mensagem ?? "").trim() !== pendencia.fraseObrigatoria) {
+    await enviar(sock, from,
+      `Para confirmar, responda exatamente:\n${pendencia.fraseObrigatoria}\n\n` +
+      `Ou mande cancelar.`)
+    return
+  }
+
+  const resultado = limparDadosFinanceirosUsuario(usuarioId)
+  limparPendenciasAcoesUsuario(usuarioId)
+  limparPendenciaLancamento(from, usuarioId)
+  limparMenuPendente(usuarioId)
+  registrarEvento("reset_dados_usuario", {
+    lancamentos: resultado.lancamentos,
+    metas: resultado.metasCategoria,
+  })
+  logger.info({ acao: "reset_dados_usuario" }, "Reset financeiro de usuário concluído")
+  await enviar(sock, from, "Seus dados financeiros foram limpos com sucesso.")
+}
+
+async function handleIniciarDadosExemplo(sock, from, usuarioId) {
+  const jaExistem = temDadosExemploRecentes(usuarioId)
+  limparPendenciaDemo(usuarioId)
+  iniciarPendenciaDemo(usuarioId, { jaExistem })
+
+  const aviso = jaExistem
+    ? "Já existem dados de exemplo recentes nesta conta. Se continuar, novos dados serão adicionados.\n\n"
+    : ""
+  await enviar(sock, from,
+    `${aviso}Vou criar alguns lançamentos fictícios para você testar resumo, consultas e fechamento.\n\n` +
+    `Responda:\n1 - Criar dados de exemplo\n2 - Cancelar`)
+}
+
+async function processarPendenciaDemo(sock, from, usuarioId, mensagem) {
+  const resposta = normalizarRespostaFluxo(mensagem)
+  if (isCancelamentoPendencia(mensagem) || resposta === "2") {
+    limparPendenciaDemo(usuarioId)
+    await enviar(sock, from, "Tudo certo. Nenhum dado de exemplo foi criado.")
+    return
+  }
+
+  if (resposta !== "1") {
+    await enviar(sock, from, "Responda 1 para criar os dados ou 2 para cancelar.")
+    return
+  }
+
+  const ids = criarDadosExemploUsuario(usuarioId)
+  limparPendenciaDemo(usuarioId)
+  registrarEvento("dados_exemplo_criados", { quantidade: ids.length })
+  logger.info({ acao: "dados_exemplo_criados", quantidade: ids.length },
+    "Dados fictícios criados")
+  await enviar(sock, from,
+    `Dados de exemplo criados. Teste:\n` +
+    `quanto gastei com mercado?\n` +
+    `onde gastei mais?\n` +
+    `fechamento`)
+}
+
+async function handleAlterarNomeUsuario(sock, from, usuarioId, comando) {
+  if (comando.erro || !comando.nome) {
+    await enviar(sock, from,
+      "Não consegui usar esse nome. Envie um nome curto, sem números ou comandos.")
+    return
+  }
+
+  atualizarUsuario(usuarioId, {
+    nome: comando.nome,
+    aguardando_nome: 0,
+  })
+  await enviar(sock, from, fmtNomeAtualizado(comando.nome))
+}
+
+async function handleCancelarTudo(sock, from, usuarioId) {
+  limparPendenciasAcoesUsuario(usuarioId)
+  limparPendenciaLancamento(from, usuarioId)
+  limparMenuPendente(usuarioId)
+  atualizarUsuario(usuarioId, {
+    aguardando_caixinha: 0,
+    valor_sugerido_caixinha: 0,
+    estado_expira_em: null,
+  })
+  await enviar(sock, from, fmtCancelamentoTotal())
+}
+
 async function handleApagarUltimo(sock, from, usuarioId, nome) {
   const ultimo = getUltimoLancamento(usuarioId)
   if (!ultimo) {
@@ -537,6 +1058,13 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     "resumo do mês":   () => handleResumo(sock, from, usuarioId, nomeSalvo),
     "relatorio":       () => handleRelatorio(sock, from, usuarioId, nomeSalvo),
     "relatorio geral": () => handleRelatorioGeral(sock, from),
+    "fechamento":      () => handleFechamentoMensal(sock, from, usuarioId),
+    "fechamento do mes": () => handleFechamentoMensal(sock, from, usuarioId),
+    "fechamento do mês": () => handleFechamentoMensal(sock, from, usuarioId),
+    "analise meu mes": () => handleFechamentoMensal(sock, from, usuarioId),
+    "analise meu mês": () => handleFechamentoMensal(sock, from, usuarioId),
+    "relatorio mensal": () => handleFechamentoMensal(sock, from, usuarioId),
+    "relatório mensal": () => handleFechamentoMensal(sock, from, usuarioId),
     "categorias":      () => handleCategorias(sock, from, usuarioId, nome),
     "historico":       () => handleHistorico(sock, from, usuarioId, nome),
     "histórico":       () => handleHistorico(sock, from, usuarioId, nome),
@@ -585,19 +1113,82 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
 
   const ajuda = parseAjuda(mensagem)
   const exportacao = parseExportacao(mensagem)
+  const acaoLancamento = parseAcaoLancamento(mensagem)
+  const resetUsuario = parseComandoResetUsuario(mensagem)
+  const dadosExemplo = parseComandoDadosExemplo(mensagem)
+  const alterarNome = parseComandoAlterarNome(mensagem)
+  const cancelarTudo = isCancelamentoTotal(mensagem)
   const correcaoUltimo = parseCorrecaoUltimo(mensagem)
   const metaCategoria = parseMetaCategoria(mensagem)
   const comandoExato = comandos[lower]
   const temComando = Boolean(
-    comandoExato || ajuda || exportacao || correcaoUltimo ||
+    comandoExato || ajuda || exportacao || acaoLancamento ||
+    resetUsuario || dadosExemplo || alterarNome || cancelarTudo || correcaoUltimo ||
     metaCategoria || partes[0] === "meta"
   )
+
+  if (cancelarTudo) {
+    await handleCancelarTudo(sock, from, usuarioId)
+    return
+  }
+
+  const pendenciaReset = obterPendenciaReset(usuarioId)
+  if (pendenciaReset) {
+    await processarPendenciaReset(
+      sock,
+      from,
+      usuarioId,
+      mensagem,
+      pendenciaReset
+    )
+    return
+  }
+
+  const pendenciaExclusao = obterPendenciaExclusao(usuarioId)
+  if (pendenciaExclusao) {
+    await processarPendenciaExclusao(
+      sock,
+      from,
+      usuarioId,
+      mensagem,
+      pendenciaExclusao
+    )
+    return
+  }
+
+  const pendenciaEdicao = obterPendenciaEdicao(usuarioId)
+  if (pendenciaEdicao) {
+    await processarPendenciaEdicao(
+      sock,
+      from,
+      usuarioId,
+      mensagem,
+      pendenciaEdicao
+    )
+    return
+  }
+
+  const pendenciaDemo = obterPendenciaDemo(usuarioId)
+  if (pendenciaDemo) {
+    await processarPendenciaDemo(sock, from, usuarioId, mensagem)
+    return
+  }
 
   const pendencia = obterPendenciaLancamento(from, usuarioId)
   if (pendencia) {
     if (isCancelamentoPendencia(mensagem)) {
       limparPendenciaLancamento(from, usuarioId)
       await enviar(sock, from, fmtPendenciaCancelada())
+      return
+    }
+
+    if (acaoLancamento || resetUsuario || dadosExemplo) {
+      await enviar(sock, from, fmtComandoBloqueadoPorPendencia())
+      return
+    }
+
+    if (alterarNome) {
+      await handleAlterarNomeUsuario(sock, from, usuarioId, alterarNome)
       return
     }
 
@@ -683,6 +1274,30 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     if (processado) return
   }
 
+  if (alterarNome) {
+    limparMenuPendente(usuarioId)
+    await handleAlterarNomeUsuario(sock, from, usuarioId, alterarNome)
+    return
+  }
+
+  if (resetUsuario) {
+    limparMenuPendente(usuarioId)
+    await handleIniciarResetUsuario(sock, from, usuarioId)
+    return
+  }
+
+  if (dadosExemplo) {
+    limparMenuPendente(usuarioId)
+    await handleIniciarDadosExemplo(sock, from, usuarioId)
+    return
+  }
+
+  if (acaoLancamento) {
+    limparMenuPendente(usuarioId)
+    await handleAcaoLancamento(sock, from, usuarioId, acaoLancamento)
+    return
+  }
+
   if (comandoExato) {
     await comandoExato()
     return
@@ -715,6 +1330,13 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   // ── Comandos com prefixo ─────────────────────────────────────────────────
   if (partes[0] === "meta") {
     await handleMeta(sock, from, usuarioId, nome, partes)
+    return
+  }
+
+  const consultaFinanceira = parseConsultaFinanceira(mensagem)
+  if (consultaFinanceira) {
+    limparMenuPendente(usuarioId)
+    await handleConsultaFinanceira(sock, from, usuarioId, consultaFinanceira)
     return
   }
 

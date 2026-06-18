@@ -297,8 +297,8 @@ uber transporte 30            # gasto, categoria transporte
 gastei 50 no mercado          # gasto, categoria mercado
 gastei 50 mercado             # gasto, categoria mercado
 paguei 50 internet            # gasto, categoria internet
-comprei 20 padaria            # gasto, categoria padaria
-despesa 20 padaria            # gasto, categoria padaria
+comprei 20 padaria            # gasto, categoria alimentacao
+despesa 20 padaria            # gasto, categoria alimentacao
 gastei 80 no ifood            # gasto, categoria alimentacao
 salario 5000                  # entrada
 freela 800                    # entrada
@@ -354,6 +354,49 @@ lancamentos      # últimos 5 lançamentos
 ultimos gastos   # últimos 5 lançamentos
 ultimos lancamentos # últimos 5 lançamentos
 ```
+
+### Consultas inteligentes e fechamento mensal
+
+O bot consulta os lançamentos do próprio usuário sem registrar a pergunta como
+despesa ou receita. Sem período explícito, usa o mês atual.
+
+```text
+quanto gastei com mercado?
+quanto gastei no mercado esse mês?
+quanto gastei hoje?
+quanto gastei essa semana?
+quanto recebi de freelance?
+qual meu maior gasto?
+onde gastei mais?
+top gastos
+top categorias
+meus gastos por categoria
+minhas entradas por categoria
+qual meu saldo?
+saldo do mes
+```
+
+Períodos entendidos: `hoje`, `ontem`, `essa semana`, `esse mês`,
+`mês passado` e `últimos 7 dias`.
+
+O fechamento mensal inclui entradas, gastos, saldo, três maiores categorias,
+maior lançamento, leitura rápida e sugestão:
+
+```text
+fechamento
+fechamento do mes
+fechamento do mês
+analise meu mes
+analise meu mês
+relatorio mensal
+relatório mensal
+```
+
+As categorias automáticas reconhecem palavras-chave comuns. Exemplos:
+`ifood` → Alimentação, `uber` → Transporte, `farmácia` → Saúde,
+`petshop` → Pets, `netflix` → Assinaturas, `freela` → Freelance e
+`comissionamento` → Comissão. Categorias personalizadas sem correspondência
+continuam sendo preservadas.
 
 ### Exportação de Planilha
 ```
@@ -411,18 +454,118 @@ gastei 50 no mercado
 metas
 ```
 
-### Apagar
+### Corrigir lançamentos
+
+Correção rápida do último lançamento:
+
 ```
-apagar ultimo    excluir ultimo    deletar ultimo
-apagar hoje      apagar semana     apagar mes
+corrigir ultimo
+editar ultimo
+alterar ultimo
+alterar ultimo para 45
+corrigir valor do ultimo para 18,90
+corrigir categoria do ultimo para mercado
+mudar ultimo para entrada
+mudar ultimo para gasto
+corrigir data do ultimo para ontem
+corrigir descrição do ultimo para almoço com cliente
 ```
 
-### Corrigir
+Para escolher um item entre os cinco lançamentos mais recentes:
+
 ```
-corrigir ultimo para 45
-corrige ultimo para 45
-alterar ultimo para 45
+editar lançamento
+corrigir lançamento
+alterar lançamento
+editar meus lançamentos
+corrigir item
+editar item
 ```
+
+O fluxo permite alterar valor, categoria, tipo, descrição ou data. Todos os
+itens são buscados e atualizados com o `usuario_id` do remetente.
+
+Para corrigir o nome salvo:
+
+```text
+mudar meu nome para Sadu
+corrigir meu nome para Sadu
+me chame de Sadu
+alterar nome para Sadu
+```
+
+Comandos financeiros, administrativos e de teste nunca são aceitos como nome
+durante o onboarding.
+
+### Exclusão segura
+
+```
+excluir ultimo
+apagar ultimo
+deletar ultimo
+excluir lançamento
+apagar item
+excluir lançamento 2
+deletar item 3
+```
+
+A exclusão de um item exige confirmação com `1 - Sim, excluir`. Enviar
+`2` ou `cancelar` preserva o lançamento.
+
+Os comandos legados de período continuam disponíveis:
+
+```text
+apagar hoje
+apagar semana
+apagar mes
+```
+
+### Dados fictícios para teste
+
+```text
+criar dados de teste
+gerar dados de exemplo
+popular teste
+demo dados
+```
+
+O bot pede confirmação e cria sete lançamentos fictícios somente para o
+usuário atual. Os registros recebem a tag interna `dado_exemplo`. Se já
+existirem dados de exemplo recentes, o bot avisa antes de permitir nova carga.
+
+### Reset seguro da conta de teste
+
+```text
+limpar meus dados
+resetar meus dados
+zerar meus dados
+apagar meus lançamentos
+limpar minha conta de teste
+reset teste
+reset
+```
+
+O reset só acontece após a frase exata `CONFIRMAR RESET`. Ele remove apenas
+lançamentos, metas e estados financeiros do usuário atual. O cadastro do
+usuário, outros usuários, whitelist, `.env`, autenticação do WhatsApp, arquivos,
+backups e exportações não são alterados.
+
+O reset administrativo global não foi implementado e permanece indisponível.
+O desfazer avançado de edições ou exclusões fica reservado para uma fase futura;
+o comando legado `desfazer` permanece com o comportamento anterior.
+
+Se houver um lançamento financeiro pendente, comandos de edição, exclusão,
+reset ou dados de exemplo pedem primeiro `cancelar`. Frases completas como
+`gastei 35 no mercado` não são usadas como categoria de um valor pendente.
+
+Para encerrar todos os estados temporários sem apagar dados:
+
+```text
+cancelar tudo
+```
+
+Esse comando limpa pendências financeiras, edição, exclusão, reset,
+demonstração, caixinha e menu.
 
 ---
 

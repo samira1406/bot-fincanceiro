@@ -25,13 +25,15 @@ vi.mock("../src/logger.js", () => ({
 const {
   getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado,
   inserirLancamento, getLancamentosPorMes, getGastosPorCategoria,
-  getUltimosLancamentos, getUltimoLancamento,
-  atualizarValorLancamento, deletarLancamento, deletarLancamentoDoUsuario,
+  getUltimosLancamentos, getUltimoLancamento, getLancamentoDoUsuario,
+  atualizarLancamentoDoUsuario, atualizarValorLancamento,
+  deletarLancamento, deletarLancamentoDoUsuario,
   deletarLancamentosDesde,
   getTodosUsuarios, getSomaPorTipo, definirMeta, getMeta,
   criarOuAtualizarMetaCategoria, listarMetasCategoria, buscarMetaCategoria,
   calcularGastoCategoriaNoPeriodo,
-  getMesesComDados, gerarCSV, mesAtual, db,
+  getMesesComDados, gerarCSV, limparDadosFinanceirosUsuario,
+  mesAtual, temDadosExemploRecentes, db,
 } = await import("../src/database.js")
 
 beforeEach(() => {
@@ -163,6 +165,52 @@ describe("Lançamentos", () => {
     expect(getUltimoLancamento(outro).valor).toBe(22)
   })
 
+  it("atualizarLancamentoDoUsuario edita campos e recalcula o mês pela data", () => {
+    const id = inserirLancamento({
+      usuarioId: UID,
+      tipo: "gasto",
+      nome: "ifood",
+      categoria: "alimentacao",
+      valor: 30,
+      mes: "6-2026",
+    })
+    const criadoEm = new Date("2025-05-10T12:00:00-03:00").getTime()
+
+    const atualizado = atualizarLancamentoDoUsuario(UID, id, {
+      valor: 45,
+      categoria: "uber",
+      tipo: "entrada",
+      nome: "corrida-reembolsada",
+      criadoEm,
+    })
+
+    expect(atualizado).toMatchObject({
+      usuario_id: UID,
+      tipo: "entrada",
+      nome: "corrida-reembolsada",
+      categoria: "uber",
+      valor: 45,
+      mes: "5-2025",
+      criado_em: criadoEm,
+    })
+  })
+
+  it("getLancamentoDoUsuario e edição não atravessam usuários", () => {
+    const outro = "outro-user"
+    criarUsuario(outro)
+    const id = inserirLancamento({
+      usuarioId: outro,
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 50,
+    })
+
+    expect(getLancamentoDoUsuario(UID, id)).toBeNull()
+    expect(atualizarLancamentoDoUsuario(UID, id, { valor: 999 })).toBeNull()
+    expect(getLancamentoDoUsuario(outro, id).valor).toBe(50)
+  })
+
   it("deletarLancamento remove o registro", () => {
     const id = inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "del", categoria: "geral", valor: 1, mes: "6-2026" })
     deletarLancamento(id)
@@ -216,6 +264,68 @@ describe("Metas", () => {
     definirMeta(UID, 3000)
     definirMeta(UID, 5000)
     expect(getMeta(UID)).toBe(5000)
+  })
+})
+
+describe("Reset financeiro seguro", () => {
+  it("apaga somente dados financeiros do usuário e preserva seu cadastro", () => {
+    criarUsuario("reset-a")
+    atualizarUsuario("reset-a", {
+      nome: "Reset A",
+      aguardando_nome: 0,
+      meta_mensal: 3000,
+    })
+    criarUsuario("reset-b")
+    atualizarUsuario("reset-b", { nome: "Reset B", aguardando_nome: 0 })
+    inserirLancamento({
+      usuarioId: "reset-a",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 100,
+    })
+    inserirLancamento({
+      usuarioId: "reset-b",
+      tipo: "gasto",
+      nome: "uber",
+      categoria: "transporte",
+      valor: 50,
+    })
+    criarOuAtualizarMetaCategoria("reset-a", "mercado", 600, 6, 2026)
+
+    const resultado = limparDadosFinanceirosUsuario("reset-a")
+
+    expect(resultado).toEqual({ lancamentos: 1, metasCategoria: 1 })
+    expect(getUsuario("reset-a")).toMatchObject({
+      nome: "Reset A",
+      aguardando_nome: 0,
+      meta_mensal: null,
+    })
+    expect(getUltimoLancamento("reset-a")).toBeNull()
+    expect(listarMetasCategoria("reset-a", 6, 2026)).toEqual([])
+    expect(getUltimoLancamento("reset-b").nome).toBe("uber")
+  })
+
+  it("identifica dados de exemplo pela tag sem confundir lançamentos comuns", () => {
+    criarUsuario("demo-user")
+    inserirLancamento({
+      usuarioId: "demo-user",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 10,
+    })
+    expect(temDadosExemploRecentes("demo-user")).toBe(false)
+
+    inserirLancamento({
+      usuarioId: "demo-user",
+      tipo: "gasto",
+      nome: "pets",
+      categoria: "pets",
+      valor: 80,
+      tags: "dado_exemplo",
+    })
+    expect(temDadosExemploRecentes("demo-user")).toBe(true)
   })
 })
 
@@ -380,7 +490,7 @@ describe("Exportação CSV", () => {
     const csv = gerarCSV(UID, "6-2026")
 
     expect(csv).toContain("Alimentação")
-    expect(csv).toContain("Farmácia")
+    expect(csv).toContain("Saúde")
   })
 
   it("CSV vazio para mês sem dados", () => {

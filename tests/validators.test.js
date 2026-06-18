@@ -2,8 +2,12 @@ import { describe, it, expect, beforeAll, vi } from "vitest"
 import {
   classificarMensagemDesconhecida,
   ehNomeUsuarioValido, normalizarNomeUsuario,
-  isCancelamentoPendencia, parseCategoriaLancamentoPendente,
-  parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
+  isCancelamentoPendencia, isCancelamentoTotal,
+  isComandoPrioritarioSistema, parseCategoriaLancamentoPendente,
+  parseAcaoLancamento, parseAjuda, parseCategoriaLancamentoEdicao,
+  parseComandoAlterarNome, parseComandoDadosExemplo, parseComandoResetUsuario,
+  parseCorrecaoUltimo, parseDataLancamento,
+  parseDescricaoLancamentoEdicao, parseExportacao, parseLancamento,
   parseMetaCategoria, parseSaudacao, parseTipoLancamentoPendente,
   parseValorAmbiguo, parseValorSimples,
 } from "../src/validators.js"
@@ -38,6 +42,23 @@ describe("nomes de usuário", () => {
     "mercado",
     "obrigado",
     "planiha",
+    "criar dados de teste",
+    "gerar dados de exemplo",
+    "popular teste",
+    "demo dados",
+    "limpar meus dados",
+    "resetar meus dados",
+    "zerar meus dados",
+    "apagar meus lançamentos",
+    "reset teste",
+    "reset",
+    "editar lançamento",
+    "corrigir lançamento",
+    "excluir lançamento 2",
+    "corrigir categoria do último para alimentação",
+    "alterar último para 45",
+    "CONFIRMAR RESET",
+    "cancelar tudo",
   ])("rejeita %s como nome", (mensagem) => {
     expect(ehNomeUsuarioValido(mensagem)).toBe(false)
     expect(normalizarNomeUsuario(mensagem)).toBeNull()
@@ -95,7 +116,7 @@ describe("parseLancamento", () => {
 
     it("parseia com ponto decimal", () => {
       expect(parseLancamento("netflix 39.90")).toEqual({
-        nome: "netflix", categoria: "netflix", valor: 39.90,
+        nome: "netflix", categoria: "assinaturas", valor: 39.90,
       })
     })
 
@@ -124,15 +145,15 @@ describe("parseLancamento", () => {
     })
 
     it.each([
-      ["gastei 10 mercado", "mercado", 10],
-      ["paguei 50 internet", "internet", 50],
-      ["comprei 20 padaria", "padaria", 20],
-      ["despesa 20 padaria", "padaria", 20],
-      ["saida 20 padaria", "padaria", 20],
-      ["saída 20 padaria", "padaria", 20],
-    ])("parseia despesa natural %s", (mensagem, categoria, valor) => {
+      ["gastei 10 mercado", "mercado", "mercado", 10],
+      ["paguei 50 internet", "internet", "internet", 50],
+      ["comprei 20 padaria", "padaria", "alimentacao", 20],
+      ["despesa 20 padaria", "padaria", "alimentacao", 20],
+      ["saida 20 padaria", "padaria", "alimentacao", 20],
+      ["saída 20 padaria", "padaria", "alimentacao", 20],
+    ])("parseia despesa natural %s", (mensagem, nome, categoria, valor) => {
       expect(parseLancamento(mensagem)).toEqual({
-        nome: categoria,
+        nome,
         categoria,
         valor,
       })
@@ -179,13 +200,13 @@ describe("parseLancamento", () => {
     })
 
     it.each([
-      ["recebi 1250 em comissionamento", "comissionamento"],
-      ["Recebi 1250 em free", "free"],
+      ["recebi 1250 em comissionamento", "comissao"],
+      ["Recebi 1250 em free", "freelance"],
       ["recebi 1250 em freelance", "freelance"],
-      ["recebi 1250 de comissionamento", "comissionamento"],
+      ["recebi 1250 de comissionamento", "comissao"],
       ["recebi 1250 por consultoria", "consultoria"],
-      ["recebi 1250 referente a freela", "freela"],
-      ["recebi 1250 do cliente", "cliente"],
+      ["recebi 1250 referente a freela", "freelance"],
+      ["recebi 1250 do cliente", "servico"],
       ["recebi 1250 da venda", "venda"],
     ])("parseia receita natural %s", (mensagem, categoria) => {
       expect(parseLancamento(mensagem)).toEqual({
@@ -199,7 +220,7 @@ describe("parseLancamento", () => {
     it.each([
       ["comissao 1250", "comissao", 1250],
       ["comissão 1250", "comissao", 1250],
-      ["freela 300", "freela", 300],
+      ["freela 300", "freelance", 300],
       ["freelance 300", "freelance", 300],
       ["pix 200", "pix", 200],
       ["entrou 450", "entrada", 450],
@@ -394,7 +415,7 @@ describe("pendência de lançamento", () => {
   it("normaliza categoria ou descrição", () => {
     expect(parseCategoriaLancamentoPendente("Conta de luz")).toEqual({
       nome: "conta-de-luz",
-      categoria: "conta-de-luz",
+      categoria: "moradia",
     })
     expect(parseCategoriaLancamentoPendente("mercado")).toEqual({
       nome: "mercado",
@@ -542,5 +563,130 @@ describe("parseMetaCategoria", () => {
 
   it("mantém meta mensal geral fora do parser de categoria", () => {
     expect(parseMetaCategoria("meta 3000")).toBeNull()
+  })
+})
+
+describe("comandos de edição e exclusão", () => {
+  it.each([
+    ["corrigir ultimo", { tipo: "editar_ultimo_menu" }],
+    ["editar último", { tipo: "editar_ultimo_menu" }],
+    ["editar lançamento", { tipo: "editar_lista" }],
+    ["corrigir item", { tipo: "editar_lista" }],
+    ["excluir último", { tipo: "excluir_ultimo" }],
+    ["excluir lançamento", { tipo: "excluir_lista", indice: null }],
+    ["apagar lançamento 2", { tipo: "excluir_lista", indice: 2 }],
+    ["deletar item 3", { tipo: "excluir_lista", indice: 3 }],
+  ])("entende %s", (mensagem, esperado) => {
+    expect(parseAcaoLancamento(mensagem)).toEqual(esperado)
+  })
+
+  it.each([
+    ["alterar último para 45", "valor", 45],
+    ["corrigir valor do ultimo para 18,90", "valor", "18,90"],
+    ["corrigir categoria do último para mercado", "categoria", "mercado"],
+    ["mudar categoria do ultimo para alimentação", "categoria", "alimentacao"],
+    ["mudar ultimo para entrada", "tipo", "entrada"],
+    ["corrigir data do ultimo para hoje", "data", "hoje"],
+    ["corrigir descrição do ultimo para almoço com cliente", "descricao", "almoco com cliente"],
+  ])("entende edição direta %s", (mensagem, campo, valor) => {
+    expect(parseAcaoLancamento(mensagem)).toMatchObject({
+      tipo: "editar_ultimo_direto",
+      campo,
+      valor,
+    })
+  })
+})
+
+describe("comandos de reset e dados de exemplo", () => {
+  it.each([
+    "limpar meus dados",
+    "resetar meus dados",
+    "zerar meus dados",
+    "apagar meus lançamentos",
+    "limpar minha conta de teste",
+    "reset teste",
+    "reset",
+  ])("entende reset seguro %s", (mensagem) => {
+    expect(parseComandoResetUsuario(mensagem)).toEqual({ tipo: "reset_usuario" })
+  })
+
+  it.each([
+    "criar dados de teste",
+    "gerar dados de exemplo",
+    "popular teste",
+    "demo dados",
+  ])("entende dados de exemplo %s", (mensagem) => {
+    expect(parseComandoDadosExemplo(mensagem)).toEqual({ tipo: "dados_exemplo" })
+  })
+
+  it("não reconhece reset global, que permanece não implementado", () => {
+    expect(parseComandoResetUsuario("resetar banco de teste")).toBeNull()
+    expect(parseComandoResetUsuario("limpar todos os dados de teste")).toBeNull()
+  })
+})
+
+describe("correção de nome e prioridade", () => {
+  it.each([
+    "mudar meu nome para Sadu",
+    "corrigir meu nome para Sadu",
+    "me chame de Sadu",
+    "alterar nome para Sadu",
+  ])("entende %s", (mensagem) => {
+    expect(parseComandoAlterarNome(mensagem)).toEqual({
+      tipo: "alterar_nome",
+      nome: "Sadu",
+    })
+    expect(isComandoPrioritarioSistema(mensagem)).toBe(true)
+  })
+
+  it("rejeita nome que contém lançamento", () => {
+    expect(parseComandoAlterarNome("mudar meu nome para mercado 35"))
+      .toEqual({ tipo: "alterar_nome", erro: "nome" })
+  })
+
+  it("reconhece cancelar tudo como comando prioritário", () => {
+    expect(isCancelamentoTotal("cancelar tudo")).toBe(true)
+    expect(isComandoPrioritarioSistema("cancelar tudo")).toBe(true)
+  })
+})
+
+describe("validação dos campos editáveis", () => {
+  it("normaliza categoria conhecida", () => {
+    expect(parseCategoriaLancamentoEdicao("Uber", "gasto")).toBe("transporte")
+  })
+
+  it("normaliza descrição curta", () => {
+    expect(parseDescricaoLancamentoEdicao("Almoço com cliente"))
+      .toBe("almoco-com-cliente")
+  })
+
+  it.each([
+    ["hoje", "6-2026"],
+    ["ontem", "6-2026"],
+    ["18/06", "6-2026"],
+    ["18/06/2025", "6-2025"],
+  ])("entende data %s", (mensagem, mes) => {
+    const resultado = parseDataLancamento(
+      mensagem,
+      new Date("2026-06-18T12:00:00-03:00")
+    )
+    expect(resultado?.mes).toBe(mes)
+  })
+
+  it("rejeita data inexistente", () => {
+    expect(parseDataLancamento(
+      "31/02/2026",
+      new Date("2026-06-18T12:00:00-03:00")
+    )).toBeNull()
+  })
+})
+
+describe("categoria de lançamento pendente", () => {
+  it.each([
+    "gastei 35 no mercado",
+    "mercado 35",
+    "recebi 2500 salario",
+  ])("rejeita frase completa com novo valor: %s", (mensagem) => {
+    expect(parseCategoriaLancamentoPendente(mensagem)).toBeNull()
   })
 })

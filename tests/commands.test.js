@@ -62,9 +62,16 @@ const {
   resetPendenciasLancamentoParaTestes,
 } = await import("../src/pendingLancamentos.js")
 const {
-  obterMenuPendente,
+  iniciarMenuPendente, obterMenuPendente,
   resetMenusPendentesParaTestes,
 } = await import("../src/interactiveMessages.js")
+const {
+  iniciarPendenciaDemo, iniciarPendenciaEdicao,
+  iniciarPendenciaExclusao, iniciarPendenciaReset,
+  obterPendenciaDemo, obterPendenciaEdicao,
+  obterPendenciaExclusao, obterPendenciaReset,
+  resetPendenciasEdicaoParaTestes,
+} = await import("../src/pendingEdits.js")
 const {
   obterRuntimeState,
   resetRuntimeStateParaTestes,
@@ -92,6 +99,7 @@ function periodoAtualTeste() {
 
 beforeEach(() => {
   resetPendenciasLancamentoParaTestes()
+  resetPendenciasEdicaoParaTestes()
   resetMenusPendentesParaTestes()
   resetRuntimeStateParaTestes()
   db.exec(`
@@ -625,6 +633,42 @@ describe("processarMensagem - aliases e valor ambíguo", () => {
   })
 
   it.each([
+    "gastei 35 no mercado",
+    "mercado 35",
+    "recebi 2500 salario",
+  ])("não usa frase com novo valor como categoria: %s", async (mensagem) => {
+    prepararUsuario("user-categoria-com-valor")
+
+    await processarMensagem(sock, "grupo", "user-categoria-com-valor", "1")
+    await processarMensagem(sock, "grupo", "user-categoria-com-valor", "2")
+    await processarMensagem(sock, "grupo", "user-categoria-com-valor", mensagem)
+
+    expect(getUltimoLancamento("user-categoria-com-valor")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-categoria-com-valor"))
+      .toMatchObject({ etapa: "categoria", valor: 1, tipo: "gasto" })
+    expect(ultimaResposta()).toContain("envie apenas a categoria")
+    expect(ultimaResposta()).toContain("R$ 1,00")
+  })
+
+  it.each([
+    "editar lançamento",
+    "excluir lançamento 2",
+    "limpar meus dados",
+    "criar dados de teste",
+  ])("orienta cancelar antes do comando %s", async (comando) => {
+    prepararUsuario("user-pendencia-bloqueia-comando")
+
+    await processarMensagem(sock, "grupo", "user-pendencia-bloqueia-comando", "300")
+    await processarMensagem(sock, "grupo", "user-pendencia-bloqueia-comando", comando)
+
+    expect(ultimaResposta()).toContain("Você tem um lançamento pendente")
+    expect(ultimaResposta()).toContain("Mande cancelar")
+    expect(getUltimoLancamento("user-pendencia-bloqueia-comando")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-pendencia-bloqueia-comando"))
+      .toMatchObject({ valor: 300, etapa: "tipo" })
+  })
+
+  it.each([
     "cancelar",
     "cancela",
     "sair",
@@ -827,12 +871,12 @@ describe("processarMensagem - receitas naturais", () => {
   })
 
   it.each([
-    ["recebi 1250 em comissionamento", "Comissionamento"],
-    ["Recebi 1250 em free", "Free"],
+    ["recebi 1250 em comissionamento", "Comissão"],
+    ["Recebi 1250 em free", "Freelance"],
     ["recebi 1250 em freelance", "Freelance"],
-    ["recebi 1250 de comissionamento", "Comissionamento"],
+    ["recebi 1250 de comissionamento", "Comissão"],
     ["recebi 1250 por consultoria", "Consultoria"],
-    ["recebi 1250 referente a freela", "Freela"],
+    ["recebi 1250 referente a freela", "Freelance"],
     ["comissao 1250", "Comissão"],
     ["comissão 1250", "Comissão"],
     ["pix 200", "Pix"],
@@ -858,9 +902,9 @@ describe("processarMensagem - receitas naturais", () => {
 
   it.each([
     ["paguei 50 internet", "Internet", 50],
-    ["comprei 20 padaria", "Padaria", 20],
-    ["despesa 20 padaria", "Padaria", 20],
-    ["saida 20 padaria", "Padaria", 20],
+    ["comprei 20 padaria", "Alimentação", 20],
+    ["despesa 20 padaria", "Alimentação", 20],
+    ["saida 20 padaria", "Alimentação", 20],
   ])("registra despesa natural %s", async (mensagem, categoriaEsperada, valor) => {
     prepararUsuario("user-despesa-natural")
 
@@ -1060,7 +1104,7 @@ describe("processarMensagem - corrigir último", () => {
 })
 
 describe("processarMensagem - apagar último", () => {
-  it("aceita excluir último e não apaga lançamento de outro usuário", async () => {
+  it("excluir último pede confirmação e não apaga lançamento de outro usuário", async () => {
     prepararUsuario("user-a")
     prepararUsuario("user-b")
     inserirLancamento({ usuarioId: "user-a", tipo: "gasto", nome: "mercado", categoria: "mercado", valor: 35, mes: "6-2026" })
@@ -1068,9 +1112,473 @@ describe("processarMensagem - apagar último", () => {
 
     await processarMensagem(sock, "grupo", "user-a", "excluir último")
 
-    expect(ultimaResposta()).toContain("apaguei seu último lançamento")
+    expect(ultimaResposta()).toContain("Tem certeza que deseja excluir?")
+    expect(getUltimoLancamento("user-a")).not.toBeNull()
+
+    await processarMensagem(sock, "grupo", "user-a", "1")
+
+    expect(ultimaResposta()).toContain("Lançamento excluído com sucesso")
     expect(getUltimoLancamento("user-a")).toBeNull()
     expect(getUltimoLancamento("user-b").nome).toBe("uber")
+  })
+})
+
+describe("processarMensagem - edição avançada", () => {
+  it.each([
+    "mudar meu nome para Sadu",
+    "corrigir meu nome para Sadu",
+    "me chame de Sadu",
+    "alterar nome para Sadu",
+  ])("%s atualiza somente o nome do usuário atual", async (mensagem) => {
+    prepararUsuario("user-nome-a")
+    prepararUsuario("user-nome-b")
+
+    await processarMensagem(sock, "grupo", "user-nome-a", mensagem)
+
+    expect(ultimaResposta()).toBe(
+      "Pronto, vou te chamar de Sadu a partir de agora."
+    )
+    expect(getUsuario("user-nome-a").nome).toBe("Sadu")
+    expect(getUsuario("user-nome-b").nome).toBe("Teste")
+  })
+
+  it("editar lançamento lista somente os itens do usuário atual", async () => {
+    prepararUsuario("user-edicao-a")
+    prepararUsuario("user-edicao-b")
+    inserirLancamento({
+      usuarioId: "user-edicao-a",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+    inserirLancamento({
+      usuarioId: "user-edicao-b",
+      tipo: "gasto",
+      nome: "segredo",
+      categoria: "segredo",
+      valor: 999,
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-edicao-a",
+      "editar lançamento"
+    )
+
+    expect(ultimaResposta()).toContain("Escolha qual lançamento quer editar")
+    expect(ultimaResposta()).toContain("Mercado")
+    expect(ultimaResposta()).not.toContain("Segredo")
+    expect(ultimaResposta()).not.toContain("999,00")
+  })
+
+  it("editar lançamento -> 2 -> 1 -> 18,90 atualiza somente o item escolhido", async () => {
+    prepararUsuario("user-edicao-lista")
+    const idAntigo = inserirLancamento({
+      usuarioId: "user-edicao-lista",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+    const idEscolhido = inserirLancamento({
+      usuarioId: "user-edicao-lista",
+      tipo: "gasto",
+      nome: "uber",
+      categoria: "transporte",
+      valor: 12.5,
+    })
+    const idRecente = inserirLancamento({
+      usuarioId: "user-edicao-lista",
+      tipo: "entrada",
+      nome: "freelance",
+      categoria: "freelance",
+      valor: 1250,
+    })
+
+    await processarMensagem(sock, "grupo", "user-edicao-lista", "editar lançamento")
+    await processarMensagem(sock, "grupo", "user-edicao-lista", "2")
+    expect(ultimaResposta()).toContain("Transporte")
+    await processarMensagem(sock, "grupo", "user-edicao-lista", "1")
+    expect(ultimaResposta()).toBe("Qual é o novo valor?")
+    await processarMensagem(sock, "grupo", "user-edicao-lista", "18,90")
+
+    expect(ultimaResposta()).toContain("Valor atualizado para R$ 18,90")
+    expect(db.prepare("SELECT valor FROM lancamentos WHERE id = ?").get(idEscolhido).valor)
+      .toBe(18.9)
+    expect(db.prepare("SELECT valor FROM lancamentos WHERE id = ?").get(idAntigo).valor)
+      .toBe(35)
+    expect(db.prepare("SELECT valor FROM lancamentos WHERE id = ?").get(idRecente).valor)
+      .toBe(1250)
+  })
+
+  it("corrige diretamente categoria, tipo, descrição e data do último", async () => {
+    prepararUsuario("user-edicao-direta")
+    inserirLancamento({
+      usuarioId: "user-edicao-direta",
+      tipo: "gasto",
+      nome: "teste",
+      categoria: "geral",
+      valor: 30,
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-edicao-direta",
+      "corrigir categoria do último para mercado"
+    )
+    expect(getUltimoLancamento("user-edicao-direta").categoria).toBe("mercado")
+    expect(ultimaResposta()).toContain("Categoria atualizada para Mercado")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-edicao-direta",
+      "mudar último para entrada"
+    )
+    expect(getUltimoLancamento("user-edicao-direta").tipo).toBe("entrada")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-edicao-direta",
+      "corrigir descrição do ultimo para almoço com cliente"
+    )
+    expect(getUltimoLancamento("user-edicao-direta").nome)
+      .toBe("almoco-com-cliente")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-edicao-direta",
+      "corrigir data do ultimo para ontem"
+    )
+    const data = new Date(getUltimoLancamento("user-edicao-direta").criado_em)
+    const ontem = new Date()
+    ontem.setDate(ontem.getDate() - 1)
+    expect(data.toDateString()).toBe(ontem.toDateString())
+  })
+
+  it("alterar último para 45 preserva o usuário e atualiza somente o valor", async () => {
+    prepararUsuario("user-alterar-ultimo")
+    inserirLancamento({
+      usuarioId: "user-alterar-ultimo",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-alterar-ultimo",
+      "alterar último para 45"
+    )
+
+    expect(getUltimoLancamento("user-alterar-ultimo")).toMatchObject({
+      usuario_id: "user-alterar-ultimo",
+      valor: 45,
+      categoria: "mercado",
+    })
+  })
+})
+
+describe("processarMensagem - exclusão por item", () => {
+  function prepararListaExclusao(usuarioId) {
+    const ids = []
+    ids.push(inserirLancamento({
+      usuarioId,
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    }))
+    ids.push(inserirLancamento({
+      usuarioId,
+      tipo: "gasto",
+      nome: "uber",
+      categoria: "transporte",
+      valor: 12.5,
+    }))
+    ids.push(inserirLancamento({
+      usuarioId,
+      tipo: "gasto",
+      nome: "ifood",
+      categoria: "alimentacao",
+      valor: 45,
+    }))
+    return ids
+  }
+
+  it("excluir lançamento 2 pede confirmação antes de excluir", async () => {
+    prepararUsuario("user-excluir-item")
+    const ids = prepararListaExclusao("user-excluir-item")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-excluir-item",
+      "excluir lançamento 2"
+    )
+
+    expect(ultimaResposta()).toContain("Tem certeza que deseja excluir?")
+    expect(ultimaResposta()).toContain("Transporte")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?")
+      .get("user-excluir-item").total).toBe(3)
+    expect(db.prepare("SELECT id FROM lancamentos WHERE id = ?").get(ids[1])).toBeTruthy()
+  })
+
+  it("cancelar mantém todos os lançamentos", async () => {
+    prepararUsuario("user-excluir-cancelar")
+    prepararListaExclusao("user-excluir-cancelar")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-excluir-cancelar",
+      "excluir lançamento 2"
+    )
+    await processarMensagem(sock, "grupo", "user-excluir-cancelar", "cancelar")
+
+    expect(ultimaResposta()).toBe("Tudo certo. Nada foi excluído.")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?")
+      .get("user-excluir-cancelar").total).toBe(3)
+  })
+
+  it("confirmar exclui somente o item escolhido", async () => {
+    prepararUsuario("user-excluir-confirmar")
+    const ids = prepararListaExclusao("user-excluir-confirmar")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-excluir-confirmar",
+      "deletar item 2"
+    )
+    await processarMensagem(sock, "grupo", "user-excluir-confirmar", "1")
+
+    expect(ultimaResposta()).toBe("Lançamento excluído com sucesso.")
+    expect(db.prepare("SELECT id FROM lancamentos WHERE id = ?").get(ids[1]))
+      .toBeUndefined()
+    expect(db.prepare("SELECT id FROM lancamentos WHERE id = ?").get(ids[0]))
+      .toBeTruthy()
+    expect(db.prepare("SELECT id FROM lancamentos WHERE id = ?").get(ids[2]))
+      .toBeTruthy()
+  })
+})
+
+describe("processarMensagem - reset seguro do usuário", () => {
+  it("pede confirmação forte e não aceita frase aproximada", async () => {
+    prepararUsuario("user-reset-forte")
+    inserirLancamento({
+      usuarioId: "user-reset-forte",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+
+    await processarMensagem(sock, "grupo", "user-reset-forte", "limpar meus dados")
+    expect(ultimaResposta()).toContain("CONFIRMAR RESET")
+    expect(getUltimoLancamento("user-reset-forte")).not.toBeNull()
+
+    await processarMensagem(sock, "grupo", "user-reset-forte", "confirmar reset")
+    expect(ultimaResposta()).toContain("responda exatamente")
+    expect(getUltimoLancamento("user-reset-forte")).not.toBeNull()
+  })
+
+  it("cancelar não apaga nada", async () => {
+    prepararUsuario("user-reset-cancelar")
+    inserirLancamento({
+      usuarioId: "user-reset-cancelar",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+
+    await processarMensagem(sock, "grupo", "user-reset-cancelar", "reset teste")
+    await processarMensagem(sock, "grupo", "user-reset-cancelar", "cancelar")
+
+    expect(ultimaResposta()).toBe("Reset cancelado. Nada foi apagado.")
+    expect(getUltimoLancamento("user-reset-cancelar")).not.toBeNull()
+  })
+
+  it("CONFIRMAR RESET apaga lançamentos e metas somente do usuário atual", async () => {
+    prepararUsuario("user-reset-a")
+    prepararUsuario("user-reset-b")
+    inserirLancamento({
+      usuarioId: "user-reset-a",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+    inserirLancamento({
+      usuarioId: "user-reset-b",
+      tipo: "gasto",
+      nome: "uber",
+      categoria: "transporte",
+      valor: 50,
+    })
+    const { mes, ano } = periodoAtualTeste()
+    criarOuAtualizarMetaCategoria("user-reset-a", "mercado", 600, mes, ano)
+
+    await processarMensagem(sock, "grupo", "user-reset-a", "limpar meus dados")
+    await processarMensagem(sock, "grupo", "user-reset-a", "CONFIRMAR RESET")
+
+    expect(ultimaResposta()).toBe("Seus dados financeiros foram limpos com sucesso.")
+    expect(getUltimoLancamento("user-reset-a")).toBeNull()
+    expect(getUsuario("user-reset-a")).toMatchObject({
+      nome: "Teste",
+      aguardando_nome: 0,
+    })
+    expect(db.prepare("SELECT COUNT(*) AS total FROM metas_categoria WHERE usuario_id = ?")
+      .get("user-reset-a").total).toBe(0)
+    expect(getUltimoLancamento("user-reset-b").nome).toBe("uber")
+  })
+
+  it("pendência de reset impede números de virarem lançamentos", async () => {
+    prepararUsuario("user-reset-prioridade")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-reset-prioridade",
+      "limpar meus dados"
+    )
+    await processarMensagem(sock, "grupo", "user-reset-prioridade", "1250")
+
+    expect(ultimaResposta()).toContain("CONFIRMAR RESET")
+    expect(getUltimoLancamento("user-reset-prioridade")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-reset-prioridade")).toBeNull()
+  })
+
+  it("reset é alias seguro e inicia confirmação forte", async () => {
+    prepararUsuario("user-reset-alias")
+
+    await processarMensagem(sock, "grupo", "user-reset-alias", "reset")
+
+    expect(ultimaResposta()).toContain("CONFIRMAR RESET")
+    expect(getUltimoLancamento("user-reset-alias")).toBeNull()
+  })
+})
+
+describe("processarMensagem - dados de exemplo", () => {
+  it("pede confirmação e cria dados apenas para o usuário atual", async () => {
+    prepararUsuario("user-demo-a")
+    prepararUsuario("user-demo-b")
+
+    await processarMensagem(sock, "grupo", "user-demo-a", "criar dados de teste")
+    expect(ultimaResposta()).toContain("1 - Criar dados de exemplo")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?")
+      .get("user-demo-a").total).toBe(0)
+
+    await processarMensagem(sock, "grupo", "user-demo-a", "1")
+
+    expect(ultimaResposta()).toContain("Dados de exemplo criados")
+    expect(db.prepare("SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?")
+      .get("user-demo-a").total).toBe(7)
+    expect(db.prepare("SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?")
+      .get("user-demo-b").total).toBe(0)
+    expect(db.prepare(
+      "SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ? AND tags = 'dado_exemplo'"
+    ).get("user-demo-a").total).toBe(7)
+  })
+
+  it("avisa sobre duplicação antes de criar novamente", async () => {
+    prepararUsuario("user-demo-duplicado")
+
+    await processarMensagem(sock, "grupo", "user-demo-duplicado", "demo dados")
+    await processarMensagem(sock, "grupo", "user-demo-duplicado", "1")
+    const antes = db.prepare(
+      "SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?"
+    ).get("user-demo-duplicado").total
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-demo-duplicado",
+      "gerar dados de exemplo"
+    )
+
+    expect(ultimaResposta()).toContain("Já existem dados de exemplo recentes")
+    expect(db.prepare(
+      "SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?"
+    ).get("user-demo-duplicado").total).toBe(antes)
+  })
+
+  it("consultas e fechamento funcionam após criar a demonstração", async () => {
+    prepararUsuario("user-demo-consultas")
+
+    await processarMensagem(sock, "grupo", "user-demo-consultas", "popular teste")
+    await processarMensagem(sock, "grupo", "user-demo-consultas", "1")
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-demo-consultas",
+      "quanto gastei com mercado?"
+    )
+    expect(ultimaResposta()).toBe(
+      "Você gastou R$ 180,00 em Mercado neste mês."
+    )
+
+    await processarMensagem(sock, "grupo", "user-demo-consultas", "fechamento")
+    expect(ultimaResposta()).toContain("FECHAMENTO DO MÊS")
+    expect(ultimaResposta()).toContain("Entradas: R$ 3.750,00")
+    expect(ultimaResposta()).toContain("Gastos: R$ 407,40")
+  })
+})
+
+describe("processarMensagem - cancelar tudo", () => {
+  it("limpa todas as pendências e menu sem apagar lançamentos", async () => {
+    prepararUsuario("user-cancelar-tudo")
+    inserirLancamento({
+      usuarioId: "user-cancelar-tudo",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+    })
+
+    await processarMensagem(sock, "grupo", "user-cancelar-tudo", "300")
+    iniciarPendenciaEdicao("user-cancelar-tudo", {
+      etapa: "escolher_item",
+      itens: [1],
+    })
+    iniciarPendenciaExclusao("user-cancelar-tudo", { lancamentoId: 1 })
+    iniciarPendenciaReset("user-cancelar-tudo")
+    iniciarPendenciaDemo("user-cancelar-tudo")
+    iniciarMenuPendente("user-cancelar-tudo")
+    atualizarUsuario("user-cancelar-tudo", {
+      aguardando_caixinha: 1,
+      valor_sugerido_caixinha: 10,
+      estado_expira_em: Date.now() + 60_000,
+    })
+
+    await processarMensagem(sock, "grupo", "user-cancelar-tudo", "cancelar tudo")
+
+    expect(ultimaResposta()).toBe(
+      "Cancelei as ações pendentes. Nenhum dado foi apagado."
+    )
+    expect(obterPendenciaLancamento("grupo", "user-cancelar-tudo")).toBeNull()
+    expect(obterPendenciaEdicao("user-cancelar-tudo")).toBeNull()
+    expect(obterPendenciaExclusao("user-cancelar-tudo")).toBeNull()
+    expect(obterPendenciaReset("user-cancelar-tudo")).toBeNull()
+    expect(obterPendenciaDemo("user-cancelar-tudo")).toBeNull()
+    expect(obterMenuPendente("user-cancelar-tudo")).toBeNull()
+    expect(getUsuario("user-cancelar-tudo")).toMatchObject({
+      aguardando_caixinha: 0,
+      valor_sugerido_caixinha: 0,
+      estado_expira_em: null,
+    })
+    expect(getUltimoLancamento("user-cancelar-tudo")).toMatchObject({
+      valor: 35,
+      categoria: "mercado",
+    })
   })
 })
 
@@ -1153,5 +1661,251 @@ describe("processarMensagem - metas por categoria", () => {
     await processarMensagem(sock, "grupo", "user-a", "metas")
 
     expect(ultimaResposta()).toContain("Mercado: R$ 0,00 / R$ 600,00")
+  })
+})
+
+describe("processarMensagem - consultas financeiras inteligentes", () => {
+  it("consulta gasto por categoria sem registrar uma nova despesa", async () => {
+    prepararUsuario("user-consulta")
+    inserirLancamento({
+      usuarioId: "user-consulta",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 850,
+      mes: mesAtual(),
+    })
+    const antes = db.prepare(
+      "SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?"
+    ).get("user-consulta").total
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-consulta",
+      "quanto gastei com mercado?"
+    )
+
+    const depois = db.prepare(
+      "SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?"
+    ).get("user-consulta").total
+    expect(ultimaResposta()).toBe(
+      "Você gastou R$ 850,00 em Mercado neste mês."
+    )
+    expect(depois).toBe(antes)
+  })
+
+  it("consulta gasto total de hoje", async () => {
+    prepararUsuario("user-hoje")
+    inserirLancamento({
+      usuarioId: "user-hoje",
+      tipo: "gasto",
+      nome: "ifood",
+      categoria: "ifood",
+      valor: 45,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(sock, "grupo", "user-hoje", "quanto gastei hoje?")
+
+    expect(ultimaResposta()).toBe("Você gastou R$ 45,00 hoje.")
+  })
+
+  it("consulta receitas da categoria freelance", async () => {
+    prepararUsuario("user-freelance")
+    inserirLancamento({
+      usuarioId: "user-freelance",
+      tipo: "entrada",
+      nome: "freela",
+      categoria: "freela",
+      valor: 2450,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-freelance",
+      "quanto recebi de freelance?"
+    )
+
+    expect(ultimaResposta()).toBe(
+      "Você recebeu R$ 2.450,00 em Freelance neste mês."
+    )
+  })
+
+  it("retorna o maior gasto do mês", async () => {
+    prepararUsuario("user-maior")
+    inserirLancamento({
+      usuarioId: "user-maior",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 500,
+      mes: mesAtual(),
+    })
+    inserirLancamento({
+      usuarioId: "user-maior",
+      tipo: "gasto",
+      nome: "uber",
+      categoria: "uber",
+      valor: 120,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-maior",
+      "qual meu maior gasto?"
+    )
+
+    expect(ultimaResposta()).toContain("Seu maior gasto neste mês foi:")
+    expect(ultimaResposta()).toContain("Mercado - R$ 500,00")
+  })
+
+  it.each(["onde gastei mais?", "top categorias", "gastos por categoria"])(
+    "%s retorna ranking de categorias",
+    async (mensagem) => {
+      prepararUsuario("user-ranking")
+      inserirLancamento({
+        usuarioId: "user-ranking",
+        tipo: "gasto",
+        nome: "mercado",
+        categoria: "mercado",
+        valor: 300,
+        mes: mesAtual(),
+      })
+      inserirLancamento({
+        usuarioId: "user-ranking",
+        tipo: "gasto",
+        nome: "uber",
+        categoria: "uber",
+        valor: 100,
+        mes: mesAtual(),
+      })
+
+      await processarMensagem(sock, "grupo", "user-ranking", mensagem)
+
+      expect(ultimaResposta()).toContain("1. Mercado: R$ 300,00")
+      expect(ultimaResposta()).toContain("2. Transporte: R$ 100,00")
+    }
+  )
+
+  it("não mistura dados de usuários diferentes", async () => {
+    prepararUsuario("user-consulta-a")
+    prepararUsuario("user-consulta-b")
+    inserirLancamento({
+      usuarioId: "user-consulta-b",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 999,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-consulta-a",
+      "quanto gastei com mercado?"
+    )
+
+    expect(ultimaResposta()).toBe(
+      "Não encontrei gastos em Mercado neste mês."
+    )
+  })
+
+  it("orienta sem registrar quando a pergunta financeira é vaga", async () => {
+    prepararUsuario("user-vaga")
+
+    await processarMensagem(sock, "grupo", "user-vaga", "quanto foi?")
+
+    expect(ultimaResposta()).toContain("Posso te ajudar com consultas como")
+    expect(getUltimoLancamento("user-vaga")).toBeNull()
+  })
+
+  it("retorna mensagem amigável quando não há dados no período", async () => {
+    prepararUsuario("user-sem-dados")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-sem-dados",
+      "quanto gastei hoje?"
+    )
+
+    expect(ultimaResposta()).toContain(
+      "Ainda não encontrei lançamentos para esse período."
+    )
+  })
+})
+
+describe("processarMensagem - fechamento mensal", () => {
+  it.each([
+    "fechamento",
+    "fechamento do mes",
+    "fechamento do mês",
+    "analise meu mes",
+    "analise meu mês",
+    "relatorio mensal",
+    "relatório mensal",
+  ])("%s gera o fechamento completo", async (mensagem) => {
+    prepararUsuario("user-fechamento")
+    inserirLancamento({
+      usuarioId: "user-fechamento",
+      tipo: "entrada",
+      nome: "salario",
+      categoria: "salario",
+      valor: 7200,
+      mes: mesAtual(),
+    })
+    inserirLancamento({
+      usuarioId: "user-fechamento",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 850,
+      mes: mesAtual(),
+    })
+    inserirLancamento({
+      usuarioId: "user-fechamento",
+      tipo: "gasto",
+      nome: "uber",
+      categoria: "uber",
+      valor: 220,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-fechamento",
+      mensagem
+    )
+
+    expect(ultimaResposta()).toContain("FECHAMENTO DO MÊS")
+    expect(ultimaResposta()).toContain("Entradas: R$ 7.200,00")
+    expect(ultimaResposta()).toContain("Gastos: R$ 1.070,00")
+    expect(ultimaResposta()).toContain("1. Mercado: R$ 850,00")
+    expect(ultimaResposta()).toContain("Você está positivo no mês.")
+    expect(ultimaResposta()).toContain(
+      "Seu maior ponto de atenção foi Mercado."
+    )
+  })
+
+  it("retorna orientação quando o mês ainda não tem lançamentos", async () => {
+    prepararUsuario("user-fechamento-vazio")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-fechamento-vazio",
+      "fechamento"
+    )
+
+    expect(ultimaResposta()).toContain(
+      "Ainda não encontrei lançamentos para esse período."
+    )
   })
 })

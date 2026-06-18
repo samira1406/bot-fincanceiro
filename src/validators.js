@@ -1,4 +1,8 @@
 import { config } from "./config.js"
+import {
+  categoriaEhEntrada,
+  normalizarCategoriaPorPalavraChave,
+} from "./categoryRules.js"
 
 function normalizarComando(texto) {
   return texto
@@ -22,46 +26,6 @@ function removerAcentos(texto) {
 
 function categoriaValida(categoria) {
   return /^[\p{L}0-9\-_]+$/u.test(categoria)
-}
-
-const categoriasCanonicas = {
-  mercado:      "mercado",
-  supermercado: "mercado",
-  feira:        "mercado",
-
-  alimentacao:  "alimentacao",
-  alimento:     "alimentacao",
-  comida:       "alimentacao",
-  restaurante:  "alimentacao",
-  delivery:     "alimentacao",
-  ifood:        "alimentacao",
-
-  uber:         "transporte",
-  taxi:         "transporte",
-  onibus:       "transporte",
-  transporte:   "transporte",
-  gasolina:     "transporte",
-  combustivel:  "transporte",
-
-  farmacia:     "farmacia",
-  remedio:      "farmacia",
-  internet:     "internet",
-  aluguel:      "aluguel",
-}
-
-const entradasCanonicas = {
-  salario:   "salario",
-  pix:       "pix",
-  freela:    "freela",
-  free:      "free",
-  freelance: "freelance",
-  comissao:  "comissao",
-  comissionamento: "comissionamento",
-  consultoria: "consultoria",
-  bonus:     "bonus",
-  extra:     "extra",
-  receita:   "receita",
-  entrada:   "entrada",
 }
 
 const PADRAO_VALOR = String.raw`(?:\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[,.]\d{1,2})?)`
@@ -113,6 +77,8 @@ const palavrasIniciaisNomeInvalido = new Set([
   "relatorio", "historico", "extrato", "ajuda", "comandos",
   "exportar", "baixar", "gerar", "planilha", "meta", "metas",
   "excluir", "corrigir", "corrige", "alterar", "apagar", "deletar",
+  "editar", "mudar", "limpar", "resetar", "zerar", "popular", "demo", "criar",
+  "reset", "confirmar", "cancelar", "cancela", "sair", "voltar", "me",
   "entrada", "receita", "xlsx", "excel", "csv",
   ...agradecimentos,
   ...typosComandos.keys(),
@@ -129,20 +95,17 @@ const termosFinanceirosNome = new Set([
 ])
 
 function normalizarCategoria(categoria) {
-  const valor = normalizarCategoriaInput(categoria)
-  const chave = removerAcentos(valor)
-  return categoriasCanonicas[chave] ?? valor
+  return normalizarCategoriaPorPalavraChave(categoria, "gasto")
 }
 
 function normalizarEntrada(nome) {
-  const valor = normalizarCategoriaInput(nome)
-  const chave = removerAcentos(valor)
-  return entradasCanonicas[chave] ?? valor
+  return normalizarCategoriaPorPalavraChave(nome, "entrada")
 }
 
 function isEntrada(nome) {
   const entrada = normalizarEntrada(nome)
-  return config.palavrasEntrada.includes(entrada) || Object.values(entradasCanonicas).includes(entrada)
+  return categoriaEhEntrada(nome) ||
+    config.palavrasEntrada.includes(entrada)
 }
 
 function montarEntrada(nomeRaw, valorRaw) {
@@ -171,7 +134,7 @@ function montarEntradaNatural(descricaoRaw, valorRaw, fallback = "entrada") {
 function montarDespesaNatural(descricaoRaw, valorRaw) {
   const valor = parseValorSimples(valorRaw)
   const nome = normalizarDescricaoLancamento(descricaoRaw, "")
-  const categoria = normalizarCategoria(nome)
+  const categoria = normalizarCategoriaPorPalavraChave(nome, "gasto")
 
   if (!valor || !nome || !categoriaValida(nome) || !categoriaValida(categoria)) return null
   return { nome, categoria, valor }
@@ -219,6 +182,8 @@ export function normalizarNomeUsuario(nome) {
   if (palavras.some(palavra => termosFinanceirosNome.has(palavra))) return null
   if (parseSaudacao(candidato) || parseAjuda(candidato) || parseExportacao(candidato) ||
       parseCorrecaoUltimo(candidato) || parseMetaCategoria(candidato) ||
+      parseAcaoLancamento(candidato) || parseComandoResetUsuario(candidato) ||
+      parseComandoDadosExemplo(candidato) ||
       parseLancamento(candidato)) {
     return null
   }
@@ -304,7 +269,7 @@ export function parseLancamento(mensagem) {
   }
 
   const categoria = partes.length >= 3
-    ? normalizarCategoria(partes[1])
+    ? normalizarCategoriaPorPalavraChave(partes[1], "gasto")
     : (config.palavrasEntrada.includes(nome) ? "geral" : normalizarCategoria(nome))
 
   if (!categoriaValida(nome))      return null
@@ -472,6 +437,16 @@ export function parseCategoriaLancamentoPendente(mensagem) {
   if (respostasCategoriaInvalidas.has(texto) || respostasCategoriaInvalidas.has(normalizado)) {
     return null
   }
+  if (/\d/.test(texto) || parseLancamento(texto) || parseValorAmbiguo(texto)) {
+    return null
+  }
+  if (
+    parseAcaoLancamento(texto) ||
+    parseComandoResetUsuario(texto) ||
+    parseComandoDadosExemplo(texto)
+  ) {
+    return null
+  }
 
   const nome = normalizarDescricaoLancamento(texto, "")
   if (!nome || !/\p{L}/u.test(nome)) return null
@@ -494,6 +469,224 @@ export function parseCorrecaoUltimo(mensagem) {
   if (!valor) return null
 
   return { valor }
+}
+
+/**
+ * Interpreta comandos de edição/exclusão de lançamentos.
+ * @param {string} mensagem
+ * @returns {object|null}
+ */
+export function parseAcaoLancamento(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+
+  if (/^(?:excluir|apagar|deletar) ultimo$/.test(normalizado)) {
+    return { tipo: "excluir_ultimo" }
+  }
+
+  let match = normalizado.match(/^(?:excluir|apagar|deletar) (?:lancamento|item)(?: (\d+))?$/)
+  if (match) {
+    return {
+      tipo: "excluir_lista",
+      indice: match[1] ? Number(match[1]) : null,
+    }
+  }
+
+  const editarLista = new Set([
+    "editar lancamento",
+    "corrigir lancamento",
+    "alterar lancamento",
+    "editar meus lancamentos",
+    "corrigir item",
+    "editar item",
+  ])
+  if (editarLista.has(normalizado)) return { tipo: "editar_lista" }
+
+  if (/^(?:corrigir|editar|alterar) ultimo$/.test(normalizado)) {
+    return { tipo: "editar_ultimo_menu" }
+  }
+
+  match = normalizado.match(
+    /^(?:corrigir|mudar|alterar|editar) (valor|categoria|tipo|data|descricao) do ultimo para (.+)$/
+  )
+  if (match) {
+    return {
+      tipo: "editar_ultimo_direto",
+      campo: match[1],
+      valor: match[2].trim(),
+    }
+  }
+
+  match = normalizado.match(
+    /^(?:mudar|alterar|corrigir) ultimo para (entrada|receita|gasto|despesa)$/
+  )
+  if (match) {
+    return {
+      tipo: "editar_ultimo_direto",
+      campo: "tipo",
+      valor: match[1],
+    }
+  }
+
+  const correcaoValor = parseCorrecaoUltimo(normalizado)
+  if (correcaoValor) {
+    return {
+      tipo: "editar_ultimo_direto",
+      campo: "valor",
+      valor: correcaoValor.valor,
+    }
+  }
+
+  return null
+}
+
+/**
+ * Reconhece comandos de reset financeiro do usuário atual.
+ * @param {string} mensagem
+ * @returns {{ tipo:"reset_usuario" }|null}
+ */
+export function parseComandoResetUsuario(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  const comandos = new Set([
+    "limpar meus dados",
+    "resetar meus dados",
+    "zerar meus dados",
+    "apagar meus lancamentos",
+    "limpar minha conta de teste",
+    "reset teste",
+    "reset",
+  ])
+  return comandos.has(normalizado) ? { tipo: "reset_usuario" } : null
+}
+
+/**
+ * Reconhece comandos para gerar lançamentos fictícios.
+ * @param {string} mensagem
+ * @returns {{ tipo:"dados_exemplo" }|null}
+ */
+export function parseComandoDadosExemplo(mensagem) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  const comandos = new Set([
+    "criar dados de teste",
+    "gerar dados de exemplo",
+    "popular teste",
+    "demo dados",
+  ])
+  return comandos.has(normalizado) ? { tipo: "dados_exemplo" } : null
+}
+
+/**
+ * Reconhece comandos para corrigir o nome salvo do usuário atual.
+ * @param {string} mensagem
+ * @returns {{ tipo:"alterar_nome", nome?:string, erro?:string }|null}
+ */
+export function parseComandoAlterarNome(mensagem) {
+  const texto = String(mensagem ?? "").trim().replace(/\s+/g, " ")
+  const match = texto.match(
+    /^(?:mudar meu nome para|corrigir meu nome para|me chame de|alterar nome para)\s+(.+)$/iu
+  )
+  if (!match) return null
+
+  const nome = normalizarNomeUsuario(match[1])
+  return nome
+    ? { tipo: "alterar_nome", nome }
+    : { tipo: "alterar_nome", erro: "nome" }
+}
+
+/**
+ * Reconhece o cancelamento de todos os estados temporários do usuário.
+ * @param {string} mensagem
+ * @returns {boolean}
+ */
+export function isCancelamentoTotal(mensagem) {
+  return normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ") === "cancelar tudo"
+}
+
+/**
+ * Identifica comandos que precisam alcançar o dispatcher antes do onboarding,
+ * da caixinha e do parser financeiro.
+ * @param {string} mensagem
+ * @returns {boolean}
+ */
+export function isComandoPrioritarioSistema(mensagem) {
+  return Boolean(
+    isCancelamentoTotal(mensagem) ||
+    parseAcaoLancamento(mensagem) ||
+    parseComandoResetUsuario(mensagem) ||
+    parseComandoDadosExemplo(mensagem) ||
+    parseComandoAlterarNome(mensagem)
+  )
+}
+
+/**
+ * Normaliza uma categoria informada durante edição.
+ * @param {string} mensagem
+ * @param {"entrada"|"gasto"} [tipo]
+ * @returns {string|null}
+ */
+export function parseCategoriaLancamentoEdicao(mensagem, tipo = "gasto") {
+  const nome = normalizarDescricaoLancamento(String(mensagem ?? ""), "")
+  if (!nome || !/\p{L}/u.test(nome)) return null
+  const categoria = normalizarCategoriaPorPalavraChave(nome, tipo)
+  return categoriaValida(categoria) ? categoria : null
+}
+
+/**
+ * Normaliza uma descrição informada durante edição.
+ * @param {string} mensagem
+ * @returns {string|null}
+ */
+export function parseDescricaoLancamentoEdicao(mensagem) {
+  const bruto = String(mensagem ?? "").trim()
+  if (!bruto || bruto.length > 100) return null
+  const nome = normalizarDescricaoLancamento(bruto, "")
+  return nome && /\p{L}/u.test(nome) && categoriaValida(nome) ? nome : null
+}
+
+/**
+ * Interpreta datas simples para edição de lançamentos.
+ * @param {string} mensagem
+ * @param {Date} [agora]
+ * @returns {{ criadoEm:number, mes:string }|null}
+ */
+export function parseDataLancamento(mensagem, agora = new Date()) {
+  const normalizado = normalizarComando(String(mensagem ?? "")).replace(/\s+/g, " ")
+  let data
+
+  if (normalizado === "hoje") {
+    data = new Date(agora)
+  } else if (normalizado === "ontem") {
+    data = new Date(agora)
+    data.setDate(data.getDate() - 1)
+  } else {
+    const match = normalizado.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/)
+    if (!match) return null
+
+    const dia = Number(match[1])
+    const mes = Number(match[2])
+    const ano = match[3] ? Number(match[3]) : agora.getFullYear()
+    data = new Date(
+      ano,
+      mes - 1,
+      dia,
+      agora.getHours(),
+      agora.getMinutes(),
+      agora.getSeconds(),
+      agora.getMilliseconds()
+    )
+
+    if (
+      data.getFullYear() !== ano ||
+      data.getMonth() !== mes - 1 ||
+      data.getDate() !== dia
+    ) {
+      return null
+    }
+  }
+
+  return {
+    criadoEm: data.getTime(),
+    mes: `${data.getMonth() + 1}-${data.getFullYear()}`,
+  }
 }
 
 /**

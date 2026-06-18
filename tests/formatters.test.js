@@ -2,15 +2,19 @@ import { describe, it, expect } from "vitest"
 import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
   fmtAjuda, fmtBetaFechado, fmtBoasVindas, fmtMensagemNaoEntendida,
-  fmtNomeInvalido, fmtNomeSalvo, fmtSaudacaoUsuario,
+  fmtCancelamentoTotal, fmtComandoBloqueadoPorPendencia,
+  fmtNomeAtualizado, fmtNomeInvalido, fmtNomeNecessarioAntes,
+  fmtNomeSalvo, fmtSaudacaoUsuario,
   fmtMenuMetasTexto, fmtMenuPrincipalTexto,
   fmtFallbackMenuInterativo,
   fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
   fmtExemplosRapidos, formatarMensagemNaoEntendida,
   fmtValorAmbiguo,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
+  fmtConfirmacaoExclusaoLancamento, fmtDataLancamentoEdicao,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
-  fmtHistoricoLancamentos,
+  fmtHistoricoLancamentos, fmtListaLancamentosEdicao,
+  fmtMenuEdicaoLancamento, fmtResumoLancamentoEdicao,
   fmtTituloResumo, obterNomeExibicaoUsuario,
   fmtListaMetasCategoria, fmtMetaCategoriaAtualizada,
   fmtMetaCategoriaCriada, fmtMetaCategoriaUltrapassada,
@@ -44,6 +48,22 @@ describe("mensagens de ajuda e onboarding", () => {
     expect(texto).toContain("recebi 2500 salario")
     expect(texto).toContain("saldo = resumo")
     expect(texto).toContain("csv = gerar CSV")
+  })
+
+  it("orienta comandos enviados antes do nome sem salvar o comando", () => {
+    expect(fmtNomeNecessarioAntes()).toContain("preciso saber como posso te chamar")
+    expect(fmtNomeNecessarioAntes()).toContain("Sadu")
+  })
+
+  it("confirma correção de nome", () => {
+    expect(fmtNomeAtualizado("Sadu"))
+      .toBe("Pronto, vou te chamar de Sadu a partir de agora.")
+  })
+
+  it("orienta pendência financeira e cancelamento total", () => {
+    expect(fmtComandoBloqueadoPorPendencia()).toContain("Mande cancelar")
+    expect(fmtCancelamentoTotal())
+      .toBe("Cancelei as ações pendentes. Nenhum dado foi apagado.")
   })
 
   it("formata menu e orientações secundárias", () => {
@@ -270,6 +290,12 @@ describe("fmtCategoriaAmigavel", () => {
     ["comissionamento", "Comissionamento"],
     ["freelance", "Freelance"],
     ["free", "Free"],
+    ["moradia", "Moradia"],
+    ["saude", "Saúde"],
+    ["pets", "Pets"],
+    ["lazer", "Lazer"],
+    ["assinaturas", "Assinaturas"],
+    ["servico", "Serviço"],
   ])("formata %s como %s", (categoria, esperado) => {
     expect(fmtCategoriaAmigavel(categoria)).toBe(esperado)
   })
@@ -307,6 +333,42 @@ describe("fmtHistoricoLancamentos", () => {
     expect(texto).toContain("Últimos lançamentos")
     expect(texto).toContain("16/06 - Despesa - R$ 35,00 - Mercado - mercado")
     expect(texto).toContain("16/06 - Receita - R$ 2.500,00 - Salário - salário")
+  })
+})
+
+describe("formatadores de edição segura", () => {
+  const agora = new Date("2026-06-18T12:00:00-03:00")
+  const lancamento = {
+    tipo: "gasto",
+    categoria: "transporte",
+    valor: 12.5,
+    criado_em: agora.getTime(),
+  }
+
+  it("formata hoje e ontem de forma amigável", () => {
+    expect(fmtDataLancamentoEdicao(agora.getTime(), agora)).toBe("hoje")
+    const ontem = new Date(agora)
+    ontem.setDate(ontem.getDate() - 1)
+    expect(fmtDataLancamentoEdicao(ontem.getTime(), agora)).toBe("ontem")
+  })
+
+  it("resume o lançamento para seleção", () => {
+    expect(fmtResumoLancamentoEdicao(lancamento, agora))
+      .toBe("Gasto - R$ 12,50 - Transporte - hoje")
+  })
+
+  it("lista lançamentos e mostra o menu de campos", () => {
+    expect(fmtListaLancamentosEdicao([lancamento]))
+      .toContain("1. Gasto - R$ 12,50 - Transporte")
+    expect(fmtMenuEdicaoLancamento(lancamento)).toContain("1 - Corrigir valor")
+    expect(fmtMenuEdicaoLancamento(lancamento)).toContain("6 - Excluir")
+  })
+
+  it("pede confirmação explícita para exclusão", () => {
+    const texto = fmtConfirmacaoExclusaoLancamento(lancamento)
+    expect(texto).toContain("Tem certeza que deseja excluir?")
+    expect(texto).toContain("1 - Sim, excluir")
+    expect(texto).toContain("2 - Cancelar")
   })
 })
 

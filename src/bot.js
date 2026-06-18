@@ -15,10 +15,14 @@ import { logger, logMensagem }                               from "./logger.js"
 import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
 import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
 import {
-  fmtBetaFechado, fmtBoasVindas, fmtNomeInvalido, fmtNomeSalvo,
+  fmtBetaFechado, fmtBoasVindas, fmtNomeInvalido, fmtNomeNecessarioAntes,
+  fmtNomeSalvo,
   obterNomeExibicaoUsuario,
 } from "./formatters.js"
-import { normalizarNomeUsuario, parseSaudacao }               from "./validators.js"
+import {
+  isCancelamentoTotal, isComandoPrioritarioSistema,
+  normalizarNomeUsuario, parseComandoAlterarNome, parseSaudacao,
+} from "./validators.js"
 import { iniciarScheduler }                                  from "./scheduler.js"
 import { iniciarPainel }                                     from "./web/painel.js"
 import { verificarRateLimit }                                from "./rateLimiter.js"
@@ -31,6 +35,7 @@ import {
   normalizarMensagemRecebida,
   sendMenuMessage,
 } from "./interactiveMessages.js"
+import { temPendenciaAcaoUsuario } from "./pendingEdits.js"
 
 // ── Estado global ──────────────────────────────────────────────────────────────
 let tentativas   = 0
@@ -356,12 +361,30 @@ export async function iniciarBot() {
       // ── Deduplicação ─────────────────────────────────────────────────────
       let usuario = getUsuario(usuarioId)
       const saudacao = parseSaudacao(mensagem)
+      const alterarNome = parseComandoAlterarNome(mensagem)
+      const comandoPrioritario = isComandoPrioritarioSistema(mensagem)
+      const cancelarTudo = isCancelamentoTotal(mensagem)
       if (usuario?.ultimo_msg_id === messageId) return
       if (usuario) atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
 
       // ── Novo usuário ──────────────────────────────────────────────────────
       if (!usuario) {
         criarUsuario(usuarioId)
+
+        if (alterarNome) {
+          atualizarUsuario(usuarioId, { ultimo_msg_id: messageId })
+          await processarMensagem(sock, from, usuarioId, mensagem, {
+            pularBeta: grupo && !exigeParticipante,
+          })
+          return
+        }
+
+        if (comandoPrioritario) {
+          atualizarUsuario(usuarioId, { aguardando_nome: 1, ultimo_msg_id: messageId })
+          await enviar(sock, from, fmtNomeNecessarioAntes())
+          return
+        }
+
         const nomeInicial = normalizarNomeUsuario(mensagem)
         if (nomeInicial) {
           atualizarUsuario(usuarioId, {
@@ -378,8 +401,40 @@ export async function iniciarBot() {
         return
       }
 
+      // Pendências de reset/edição têm prioridade sobre outros fluxos.
+      if (temPendenciaAcaoUsuario(usuarioId)) {
+        logMensagem(usuarioId, mensagem.split(" ")[0])
+        registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
+        await processarMensagem(sock, from, usuarioId, mensagem, {
+          pularBeta: grupo && !exigeParticipante,
+        })
+        return
+      }
+
+      // Comandos de segurança e edição chegam ao dispatcher antes da caixinha.
+      if (!usuario.aguardando_nome && comandoPrioritario) {
+        logMensagem(usuarioId, mensagem.split(" ")[0])
+        registrarMensagemProcessada({ usuarioId, origem: grupo ? "grupo" : "privado" })
+        await processarMensagem(sock, from, usuarioId, mensagem, {
+          pularBeta: grupo && !exigeParticipante,
+        })
+        return
+      }
+
       // ── Aguardando nome ───────────────────────────────────────────────────
       if (usuario.aguardando_nome) {
+        if (alterarNome || cancelarTudo) {
+          await processarMensagem(sock, from, usuarioId, mensagem, {
+            pularBeta: grupo && !exigeParticipante,
+          })
+          return
+        }
+
+        if (comandoPrioritario) {
+          await enviar(sock, from, fmtNomeNecessarioAntes())
+          return
+        }
+
         const nome = normalizarNomeUsuario(mensagem)
         if (nome) {
           atualizarUsuario(usuarioId, { nome, aguardando_nome: 0 })

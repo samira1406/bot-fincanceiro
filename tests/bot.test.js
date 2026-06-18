@@ -198,6 +198,7 @@ const {
   inserirLancamento, mesAtual,
 } = await import("../src/database.js")
 const { resetPendenciasLancamentoParaTestes } = await import("../src/pendingLancamentos.js")
+const { resetPendenciasEdicaoParaTestes } = await import("../src/pendingEdits.js")
 const { resetMenusPendentesParaTestes } = await import("../src/interactiveMessages.js")
 
 function prepararUsuario(id) {
@@ -225,6 +226,7 @@ async function entregarMensagem({
 
 beforeEach(async () => {
   resetPendenciasLancamentoParaTestes()
+  resetPendenciasEdicaoParaTestes()
   resetMenusPendentesParaTestes()
   botMock.handlers = {}
   botMock.sendMessage.mockClear()
@@ -306,6 +308,69 @@ describe("bot - conversas privadas e grupos", () => {
     expect(usuario.nome).toBe("Sadu")
     expect(usuario.aguardando_nome).toBe(0)
     expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("Perfeito, Sadu")
+  })
+
+  it("não salva criar dados de teste como nome durante onboarding", async () => {
+    await entregarMensagem({
+      remoteJid: "5515000000040@s.whatsapp.net",
+      texto: "criar dados de teste",
+      id: "msg-comando-nome-1",
+    })
+
+    const usuario = getUsuario("5515000000040")
+    const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
+    expect(usuario.nome).toBeNull()
+    expect(usuario.aguardando_nome).toBe(1)
+    expect(resposta).toContain("preciso saber como posso te chamar")
+
+    await entregarMensagem({
+      remoteJid: "5515000000040@s.whatsapp.net",
+      texto: "1",
+      id: "msg-comando-nome-2",
+    })
+
+    expect(getUsuario("5515000000040").nome).toBeNull()
+    expect(getUltimoLancamento("5515000000040")).toBeNull()
+  })
+
+  it("mudar meu nome para Sadu corrige nome contaminado", async () => {
+    prepararUsuario("5515000000041")
+    atualizarUsuario("5515000000041", { nome: "Criar Dados De Teste" })
+
+    await entregarMensagem({
+      remoteJid: "5515000000041@s.whatsapp.net",
+      texto: "mudar meu nome para Sadu",
+      id: "msg-corrigir-nome",
+    })
+
+    expect(getUsuario("5515000000041").nome).toBe("Sadu")
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toBe("Pronto, vou te chamar de Sadu a partir de agora.")
+  })
+
+  it("dados de teste e confirmação 1 chegam ao dispatcher antes do parser", async () => {
+    prepararUsuario("5515000000042")
+
+    await entregarMensagem({
+      remoteJid: "5515000000042@s.whatsapp.net",
+      texto: "criar dados de teste",
+      id: "msg-demo-prioridade-1",
+    })
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("1 - Criar dados de exemplo")
+
+    await entregarMensagem({
+      remoteJid: "5515000000042@s.whatsapp.net",
+      texto: "1",
+      id: "msg-demo-prioridade-2",
+    })
+
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("Dados de exemplo criados")
+    expect(getUltimoLancamento("5515000000042").valor).not.toBe(1)
+    expect(db.prepare(
+      "SELECT COUNT(*) AS total FROM lancamentos WHERE usuario_id = ?"
+    ).get("5515000000042").total).toBe(7)
   })
 
   it("saudação usa o nome salvo sem perguntar novamente", async () => {

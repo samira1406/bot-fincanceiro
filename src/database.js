@@ -14,6 +14,7 @@ import fs          from "fs"
 import { config }  from "./config.js"
 import { logger }  from "./logger.js"
 import { gerarCSVLancamentos } from "./exporters.js"
+import { normalizarCategoriaPorPalavraChave } from "./categoryRules.js"
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 fs.mkdirSync(resolve(config.dbPath, ".."), { recursive: true })
@@ -118,15 +119,15 @@ export function getTodosUsuarios() {
 
 /**
  * Insere um lançamento.
- * @param {{ usuarioId:string, tipo:"entrada"|"gasto", nome:string, categoria?:string, valor:number, mes?:string }} p
+ * @param {{ usuarioId:string, tipo:"entrada"|"gasto", nome:string, categoria?:string, valor:number, mes?:string, tags?:string }} p
  * @returns {number} ID do lançamento inserido
  */
-export function inserirLancamento({ usuarioId, tipo, nome, categoria, valor, mes }) {
-  const categoriaNorm = normalizarCategoria(categoria ?? "geral")
+export function inserirLancamento({ usuarioId, tipo, nome, categoria, valor, mes, tags = "" }) {
+  const categoriaNorm = normalizarCategoriaPorPalavraChave(categoria ?? "geral", tipo)
   const info = db.prepare(`
-    INSERT INTO lancamentos (usuario_id, tipo, nome, categoria, valor, mes)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(usuarioId, tipo, nome, categoriaNorm, valor, mes ?? mesAtual())
+    INSERT INTO lancamentos (usuario_id, tipo, nome, categoria, valor, mes, tags)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(usuarioId, tipo, nome, categoriaNorm, valor, mes ?? mesAtual(), tags)
   return info.lastInsertRowid
 }
 
@@ -218,6 +219,72 @@ export function getUltimoLancamento(usuarioId) {
 }
 
 /**
+ * Busca um lançamento apenas quando ele pertence ao usuário informado.
+ * @param {string} usuarioId
+ * @param {number} id
+ * @returns {object|null}
+ */
+export function getLancamentoDoUsuario(usuarioId, id) {
+  return db.prepare(`
+    SELECT * FROM lancamentos
+    WHERE id = ? AND usuario_id = ?
+  `).get(id, usuarioId) ?? null
+}
+
+/**
+ * Atualiza campos editáveis de um lançamento pertencente ao usuário.
+ * @param {string} usuarioId
+ * @param {number} id
+ * @param {{ valor?:number, categoria?:string, tipo?:"entrada"|"gasto", nome?:string, criadoEm?:number }} campos
+ * @returns {object|null}
+ */
+export function atualizarLancamentoDoUsuario(usuarioId, id, campos) {
+  const atual = getLancamentoDoUsuario(usuarioId, id)
+  if (!atual) return null
+
+  const atualizacoes = {}
+  if (campos.valor !== undefined) {
+    const valor = Number(campos.valor)
+    if (!Number.isFinite(valor) || valor <= 0 || valor > config.valorMaximo) return null
+    atualizacoes.valor = valor
+  }
+  if (campos.tipo !== undefined) {
+    if (!["entrada", "gasto"].includes(campos.tipo)) return null
+    atualizacoes.tipo = campos.tipo
+  }
+  if (campos.categoria !== undefined) {
+    atualizacoes.categoria = normalizarCategoriaPorPalavraChave(
+      campos.categoria,
+      campos.tipo ?? atual.tipo
+    )
+  }
+  if (campos.nome !== undefined) {
+    const nome = String(campos.nome).trim()
+    if (!nome) return null
+    atualizacoes.nome = nome
+  }
+  if (campos.criadoEm !== undefined) {
+    const data = new Date(Number(campos.criadoEm))
+    if (Number.isNaN(data.getTime())) return null
+    atualizacoes.criado_em = data.getTime()
+    atualizacoes.mes = `${data.getMonth() + 1}-${data.getFullYear()}`
+  }
+
+  const entradas = Object.entries(atualizacoes)
+  if (!entradas.length) return atual
+
+  const sets = entradas.map(([campo]) => `${campo} = ?`).join(", ")
+  const valores = entradas.map(([, valor]) => valor)
+  db.prepare(`
+    UPDATE lancamentos
+    SET ${sets}
+    WHERE id = ? AND usuario_id = ?
+  `).run(...valores, id, usuarioId)
+
+  return getLancamentoDoUsuario(usuarioId, id)
+}
+
+/**
  * Atualiza apenas o valor de um lançamento pertencente ao usuário.
  * @param {string} usuarioId
  * @param {number} id
@@ -225,12 +292,7 @@ export function getUltimoLancamento(usuarioId) {
  * @returns {boolean}
  */
 export function atualizarValorLancamento(usuarioId, id, valor) {
-  const info = db.prepare(`
-    UPDATE lancamentos
-    SET valor = ?
-    WHERE id = ? AND usuario_id = ?
-  `).run(valor, id, usuarioId)
-  return info.changes === 1
+  return atualizarLancamentoDoUsuario(usuarioId, id, { valor }) !== null
 }
 
 /**
@@ -265,6 +327,54 @@ export function deletarLancamentosDesde(usuarioId, desde) {
   return db.prepare(`
     DELETE FROM lancamentos WHERE usuario_id = ? AND criado_em >= ?
   `).run(usuarioId, desde).changes
+}
+
+/**
+ * Remove somente dados financeiros do usuário, preservando cadastro e sessão.
+ * @param {string} usuarioId
+ * @returns {{ lancamentos:number, metasCategoria:number }}
+ */
+export function limparDadosFinanceirosUsuario(usuarioId) {
+  const executar = db.transaction((id) => {
+    const metasCategoria = db.prepare(
+      "DELETE FROM metas_categoria WHERE usuario_id = ?"
+    ).run(id).changes
+    const lancamentos = db.prepare(
+      "DELETE FROM lancamentos WHERE usuario_id = ?"
+    ).run(id).changes
+
+    db.prepare(`
+      UPDATE usuarios
+      SET meta_mensal = NULL,
+          aguardando_caixinha = 0,
+          valor_sugerido_caixinha = 0,
+          estado_expira_em = NULL
+      WHERE id = ?
+    `).run(id)
+
+    return { lancamentos, metasCategoria }
+  })
+
+  return executar(usuarioId)
+}
+
+/**
+ * Indica se o usuário já possui dados fictícios recentes.
+ * @param {string} usuarioId
+ * @param {number} [desde]
+ * @returns {boolean}
+ */
+export function temDadosExemploRecentes(
+  usuarioId,
+  desde = Date.now() - (30 * 24 * 60 * 60 * 1000)
+) {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM lancamentos
+    WHERE usuario_id = ?
+      AND tags LIKE '%dado_exemplo%'
+      AND criado_em >= ?
+    LIMIT 1
+  `).get(usuarioId, desde))
 }
 
 // ── Agregações ────────────────────────────────────────────────────────────────
@@ -324,39 +434,8 @@ function mesAnoParaMesChave(mes, ano) {
   return `${mes}-${ano}`
 }
 
-function removerAcentos(texto) {
-  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-}
-
-const categoriasCanonicas = {
-  mercado:      "mercado",
-  supermercado: "mercado",
-  feira:        "mercado",
-
-  alimentacao:  "alimentacao",
-  alimento:     "alimentacao",
-  comida:       "alimentacao",
-  restaurante:  "alimentacao",
-  delivery:     "alimentacao",
-  ifood:        "alimentacao",
-
-  uber:         "transporte",
-  taxi:         "transporte",
-  onibus:       "transporte",
-  transporte:   "transporte",
-  gasolina:     "transporte",
-  combustivel:  "transporte",
-
-  farmacia:     "farmacia",
-  remedio:      "farmacia",
-  internet:     "internet",
-  aluguel:      "aluguel",
-}
-
 function normalizarCategoria(categoria) {
-  const valor = String(categoria ?? "").trim().toLowerCase()
-  const chave = removerAcentos(valor)
-  return categoriasCanonicas[chave] ?? valor
+  return normalizarCategoriaPorPalavraChave(categoria, "gasto")
 }
 
 /**
