@@ -69,6 +69,7 @@ const botMock = vi.hoisted(() => {
   return {
     handlers: {},
     sendMessage: vi.fn(),
+    relayMessage: vi.fn(),
     config: {
       gruposPermitidos:     [],
       grupoPermitido:       "",
@@ -76,6 +77,8 @@ const botMock = vi.hoisted(() => {
       caixinhaPercentual:   0.3,
       valorMaximo:          100_000,
       timeoutEstadoMs:      600_000,
+      whatsappInteractiveEnabled: false,
+      whatsappMenuMode:     "text",
       horaLembreteMensal:   20,
       rateLimitPorMinuto:   15,
       beta:                 {
@@ -158,6 +161,7 @@ vi.mock("@whiskeysockets/baileys", () => ({
       }),
     },
     sendMessage: botMock.sendMessage,
+    relayMessage: botMock.relayMessage,
   })),
   useMultiFileAuthState: vi.fn(async () => ({
     state: { creds: {}, keys: {} },
@@ -191,29 +195,42 @@ vi.mock("../src/web/painel.js", () => ({
 const { extrairIdentificadorRemetente, extrairUsuarioIdMensagem, iniciarBot, isJidGrupo } = await import("../src/bot.js")
 const {
   atualizarUsuario, criarUsuario, db, getUltimoLancamento, getUsuario,
+  inserirLancamento, mesAtual,
 } = await import("../src/database.js")
 const { resetPendenciasLancamentoParaTestes } = await import("../src/pendingLancamentos.js")
+const { resetMenusPendentesParaTestes } = await import("../src/interactiveMessages.js")
 
 function prepararUsuario(id) {
   criarUsuario(id)
   atualizarUsuario(id, { nome: "Teste", aguardando_nome: 0 })
 }
 
-async function entregarMensagem({ remoteJid, texto, id = "msg-1", participant, fromMe = false }) {
+async function entregarMensagem({
+  remoteJid,
+  texto,
+  message,
+  id = "msg-1",
+  participant,
+  fromMe = false,
+}) {
   await botMock.handlers["messages.upsert"]({
     type: "notify",
     messages: [{
       key: { remoteJid, participant, id, fromMe },
       messageTimestamp: Math.floor(Date.now() / 1000),
-      message: { conversation: texto },
+      message: message ?? { conversation: texto },
     }],
   })
 }
 
 beforeEach(async () => {
   resetPendenciasLancamentoParaTestes()
+  resetMenusPendentesParaTestes()
   botMock.handlers = {}
   botMock.sendMessage.mockClear()
+  botMock.relayMessage.mockClear()
+  botMock.config.whatsappInteractiveEnabled = false
+  botMock.config.whatsappMenuMode = "text"
   botMock.config.beta = {
     ativo: false,
     responderBloqueado: false,
@@ -302,7 +319,9 @@ describe("bot - conversas privadas e grupos", () => {
 
     const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
     expect(resposta).toContain("Oi, Sadu")
+    expect(resposta).toContain("MENU DO BOT FINANÇAS")
     expect(resposta).not.toContain("como você gostaria que eu te chamasse")
+    expect(botMock.relayMessage).not.toHaveBeenCalled()
   })
 
   it("ajuda continua exibindo os comandos completos", async () => {
@@ -317,6 +336,75 @@ describe("bot - conversas privadas e grupos", () => {
     expect(resposta).toContain("gastei 35 no mercado")
     expect(resposta).toContain("recebi 2500 salario")
     expect(resposta).toContain("exportar planilha")
+    expect(botMock.relayMessage).not.toHaveBeenCalled()
+  })
+
+  it("menu tenta envio interativo quando habilitado", async () => {
+    botMock.config.whatsappInteractiveEnabled = true
+    botMock.config.whatsappMenuMode = "interactive"
+    prepararUsuario("5515000000009")
+
+    await entregarMensagem({
+      remoteJid: "5515000000009@s.whatsapp.net",
+      texto: "menu",
+      id: "msg-menu-interativo",
+    })
+
+    expect(botMock.relayMessage).toHaveBeenCalledOnce()
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text).toContain("menu texto")
+  })
+
+  it("resposta interativa Ver resumo executa o resumo", async () => {
+    prepararUsuario("5515000000011")
+
+    await entregarMensagem({
+      remoteJid: "5515000000011@s.whatsapp.net",
+      id: "msg-clique-resumo",
+      message: {
+        listResponseMessage: {
+          title: "Ver resumo",
+          singleSelectReply: { selectedRowId: "resumo" },
+        },
+      },
+    })
+
+    const resposta = botMock.sendMessage.mock.calls.at(-1)[1].text
+    expect(resposta).toContain("RESUMO")
+    expect(resposta).toContain("Saldo")
+  })
+
+  it("resposta interativa Exportar planilha gera XLSX", async () => {
+    prepararUsuario("5515000000012")
+    inserirLancamento({
+      usuarioId: "5515000000012",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+      mes: mesAtual(),
+    })
+
+    await entregarMensagem({
+      remoteJid: "5515000000012@s.whatsapp.net",
+      id: "msg-clique-planilha",
+      message: {
+        interactiveResponseMessage: {
+          nativeFlowResponseMessage: {
+            paramsJson: JSON.stringify({
+              id: "exportar_planilha",
+              title: "Exportar planilha",
+            }),
+          },
+        },
+      },
+    })
+
+    const documento = botMock.sendMessage.mock.calls
+      .map(([, payload]) => payload)
+      .find(payload => payload.document)
+    expect(documento.fileName).toMatch(/\.xlsx$/)
+    expect(botMock.sendMessage.mock.calls.at(-1)[1].text)
+      .toContain("planilha Excel foi gerada")
   })
 
   it("conclui 1250 + 2 + mercado sem transformar 2 em R$ 2,00", async () => {
@@ -513,6 +601,26 @@ describe("bot - conversas privadas e grupos", () => {
     })
 
     expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5515888888888")).toBeNull()
+  })
+
+  it("beta silencioso não envia menu para número não autorizado", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5511999999999"],
+    }
+    botMock.config.whatsappInteractiveEnabled = true
+    botMock.config.whatsappMenuMode = "interactive"
+
+    await entregarMensagem({
+      remoteJid: "5515888888888@s.whatsapp.net",
+      texto: "menu",
+      id: "msg-menu-bloqueado",
+    })
+
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(botMock.relayMessage).not.toHaveBeenCalled()
     expect(getUsuario("5515888888888")).toBeNull()
   })
 

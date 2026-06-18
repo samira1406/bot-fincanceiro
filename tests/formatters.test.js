@@ -3,6 +3,9 @@ import {
   fmtValor, fmtLista, fmtCategorias, fmtSaldo,
   fmtAjuda, fmtBetaFechado, fmtBoasVindas, fmtMensagemNaoEntendida,
   fmtNomeInvalido, fmtNomeSalvo, fmtSaudacaoUsuario,
+  fmtMenuMetasTexto, fmtMenuPrincipalTexto,
+  fmtFallbackMenuInterativo,
+  fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
   fmtValorAmbiguo,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
@@ -29,6 +32,28 @@ describe("fmtValor", () => {
 })
 
 describe("mensagens de ajuda e onboarding", () => {
+  it("formata menu textual principal numerado", () => {
+    const texto = fmtMenuPrincipalTexto("Sadu")
+
+    expect(texto).toContain("Oi, Sadu")
+    expect(texto).toContain("MENU DO BOT FINANÇAS")
+    expect(texto).toContain("1. 💸 Registrar gasto")
+    expect(texto).toContain("7. 📋 Ajuda completa")
+    expect(texto).toContain("mercado 35")
+    expect(texto).toContain("recebi 2500 salario")
+    expect(texto).toContain("saldo = resumo")
+    expect(texto).toContain("csv = gerar CSV")
+  })
+
+  it("formata menu e orientações secundárias", () => {
+    expect(fmtMenuMetasTexto()).toContain("1. Criar meta")
+    expect(fmtMenuMetasTexto()).toContain("3. Voltar ao menu")
+    expect(fmtOrientacaoGasto()).toContain("paguei 50 internet")
+    expect(fmtOrientacaoEntrada()).toContain("recebi 2500 salario")
+    expect(fmtOrientacaoMeta()).toContain("meta mercado 600")
+    expect(fmtFallbackMenuInterativo()).toContain("menu texto")
+  })
+
   it("formata mensagem de ajuda com comandos principais", () => {
     const texto = fmtAjuda()
 

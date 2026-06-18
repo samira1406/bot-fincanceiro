@@ -71,6 +71,8 @@ pm2 save && pm2 startup
 | `VALOR_MAXIMO` | 100000 | Teto por lançamento (R$) |
 | `TIMEOUT_ESTADO_MINUTOS` | 10 | Minutos para expirar estado pendente |
 | `HORA_LEMBRETE_MENSAL` | 20 | Hora do lembrete automático |
+| `WHATSAPP_INTERACTIVE_ENABLED` | false | Habilita experimentalmente listas pelo Baileys |
+| `WHATSAPP_MENU_MODE` | text | `text`, `interactive` ou `auto`; `text` é o modo seguro |
 | `RATE_LIMIT_MSG_POR_MINUTO` | 15 | Máx. mensagens por usuário por minuto |
 | `BETA_MODE` | false | Ativa o beta fechado quando `true` |
 | `BETA_BLOCKED_REPLY` | false | Define se bloqueados recebem aviso; o padrão seguro é ignorar |
@@ -200,7 +202,45 @@ início      # inicia ou retoma a saudação
 start       # inicia ou retoma a saudação
 ```
 
-`ajuda`, `comandos`, `como usar` e `menu` exibem um menu numerado com exemplos e uma explicação breve de cada recurso.
+`menu`, `ajuda`, `oi` e `start` abrem o menu principal. O padrão recomendado,
+especialmente para beta e WhatsApp Web, é:
+
+```env
+WHATSAPP_INTERACTIVE_ENABLED=false
+WHATSAPP_MENU_MODE=text
+```
+
+Esse modo envia somente texto e não chama `relayMessage`, evitando a mensagem
+"Não foi possível carregar a mensagem".
+
+As listas do Baileys são experimentais: o envio pode concluir sem erro e ainda
+assim o WhatsApp Web não conseguir renderizar. Os modos disponíveis são:
+
+- `text`: sempre envia somente o menu textual;
+- `interactive`: tenta a lista e envia também a instrução `menu texto`;
+- `auto`: tenta a lista e envia também o menu textual completo.
+
+Se `WHATSAPP_MENU_MODE` estiver ausente, `WHATSAPP_INTERACTIVE_ENABLED=false`
+seleciona `text`; somente `true` seleciona experimentalmente `interactive`.
+Em qualquer modo, `menu texto` força imediatamente o fallback textual.
+
+```text
+1. Registrar gasto
+2. Registrar entrada
+3. Ver resumo
+4. Ver histórico
+5. Exportar planilha
+6. Metas
+7. Ajuda completa
+```
+
+Depois de abrir o menu, também é possível responder apenas com o número. O
+estado é individual por usuário e expira conforme `TIMEOUT_ESTADO_MINUTOS`.
+Pendências financeiras têm prioridade: depois de enviar somente `1250`, as
+respostas `1` e `2` continuam significando entrada e gasto.
+
+`comandos`, `como usar` e a opção `Ajuda completa` exibem o guia textual
+detalhado com exemplos de todos os recursos.
 
 ### Lançamentos
 ```

@@ -25,6 +25,7 @@ import {
   fmtAjuda, fmtBetaFechado, fmtMensagemNaoEntendida,
   fmtTituloResumo, obterNomeExibicaoUsuario,
   fmtCategoriaPendente, fmtPendenciaCancelada, fmtValorAmbiguo,
+  fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
   fmtTipoLancamento, fmtCategoriaAmigavel,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtMetaCategoriaCriada, fmtMetaCategoriaAtualizada,
@@ -41,6 +42,9 @@ import {
   iniciarPendenciaLancamento, limparPendenciaLancamento,
   obterPendenciaLancamento, selecionarTipoPendencia,
 } from "./pendingLancamentos.js"
+import {
+  limparMenuPendente, obterMenuPendente, sendMenuMessage,
+} from "./interactiveMessages.js"
 
 // ── Envio seguro ──────────────────────────────────────────────────────────────
 
@@ -128,6 +132,41 @@ async function verificarMeta(sock, from, usuarioId, nome, novoGasto) {
 
 async function handleComandos(sock, from) {
   await enviar(sock, from, fmtAjuda())
+}
+
+async function handleMenuPrincipal(sock, from, usuarioId, nome, modo) {
+  await sendMenuMessage(sock, from, usuarioId, {
+    contexto: "principal",
+    nome: obterNomeExibicaoUsuario(nome),
+    modo,
+  })
+}
+
+async function handleMenuMetas(sock, from, usuarioId) {
+  await sendMenuMessage(sock, from, usuarioId, { contexto: "metas" })
+}
+
+async function handleRespostaMenuPendente(sock, from, usuarioId, menu, numero, handlers) {
+  const acoesPrincipal = {
+    "1": handlers.iniciarGasto,
+    "2": handlers.iniciarEntrada,
+    "3": handlers.resumo,
+    "4": handlers.historico,
+    "5": handlers.planilha,
+    "6": handlers.menuMetas,
+    "7": handlers.ajudaCompleta,
+  }
+  const acoesMetas = {
+    "1": handlers.iniciarMeta,
+    "2": handlers.verMetas,
+    "3": handlers.menuPrincipal,
+  }
+  const acao = (menu.contexto === "metas" ? acoesMetas : acoesPrincipal)[numero]
+  if (!acao) return false
+
+  limparMenuPendente(usuarioId)
+  await acao()
+  return true
 }
 
 async function handleResumo(sock, from, usuarioId, nome) {
@@ -464,13 +503,19 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
 
   // ── Comandos exatos (Map lookup O(1)) ────────────────────────────────────
   const comandos = {
-    "ajuda":           () => handleComandos(sock, from),
+    "ajuda":           () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo),
+    "ajuda completa":  () => handleComandos(sock, from),
     "comandos":        () => handleComandos(sock, from),
     "como usar":       () => handleComandos(sock, from),
-    "menu":            () => handleComandos(sock, from),
-    "inicio":          () => handleComandos(sock, from),
-    "início":          () => handleComandos(sock, from),
-    "start":           () => handleComandos(sock, from),
+    "menu":            () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo),
+    "menu texto":      () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo, "text"),
+    "inicio":          () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo),
+    "início":          () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo),
+    "start":           () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo),
+    "iniciar_gasto":   () => enviar(sock, from, fmtOrientacaoGasto()),
+    "iniciar_entrada": () => enviar(sock, from, fmtOrientacaoEntrada()),
+    "iniciar_meta":    () => enviar(sock, from, fmtOrientacaoMeta()),
+    "menu_metas":      () => handleMenuMetas(sock, from, usuarioId),
     "resumo":          () => handleResumo(sock, from, usuarioId, nomeSalvo),
     "saldo":           () => handleResumo(sock, from, usuarioId, nomeSalvo),
     "meu resumo":      () => handleResumo(sock, from, usuarioId, nomeSalvo),
@@ -573,6 +618,30 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     }
   }
 
+  const menuPendente = obterMenuPendente(usuarioId)
+  if (menuPendente && /^\d+$/.test(lower)) {
+    const processado = await handleRespostaMenuPendente(
+      sock,
+      from,
+      usuarioId,
+      menuPendente,
+      lower,
+      {
+        iniciarGasto: () => enviar(sock, from, fmtOrientacaoGasto()),
+        iniciarEntrada: () => enviar(sock, from, fmtOrientacaoEntrada()),
+        resumo: () => handleResumo(sock, from, usuarioId, nomeSalvo),
+        historico: () => handleHistorico(sock, from, usuarioId, nome),
+        planilha: () => handleExportarXlsx(sock, from, usuarioId, nome),
+        menuMetas: () => handleMenuMetas(sock, from, usuarioId),
+        ajudaCompleta: () => handleComandos(sock, from),
+        iniciarMeta: () => enviar(sock, from, fmtOrientacaoMeta()),
+        verMetas: () => handleListarMetasCategoria(sock, from, usuarioId),
+        menuPrincipal: () => handleMenuPrincipal(sock, from, usuarioId, nomeSalvo),
+      }
+    )
+    if (processado) return
+  }
+
   if (comandoExato) {
     await comandoExato()
     return
@@ -611,6 +680,7 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   // ── Lançamento ───────────────────────────────────────────────────────────
   const valorAmbiguo = parseValorAmbiguo(mensagem)
   if (valorAmbiguo) {
+    limparMenuPendente(usuarioId)
     iniciarPendenciaLancamento(from, usuarioId, valorAmbiguo.valor)
     await enviar(sock, from, fmtValorAmbiguo(valorAmbiguo.valor))
     return
@@ -625,6 +695,7 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   const { nome: nomeLanc, categoria, valor } = lancamento
   const tipo = lancamento.tipo ?? (config.palavrasEntrada.includes(nomeLanc) ? "entrada" : "gasto")
 
+  limparMenuPendente(usuarioId)
   await registrarLancamentoComConfirmacao(sock, from, usuarioId, nome, {
     tipo,
     nome: nomeLanc,

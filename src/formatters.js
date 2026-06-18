@@ -124,6 +124,83 @@ export function fmtAjuda() {
    excluir ultimo`
 }
 
+export function fmtMenuPrincipalTexto(nome) {
+  const saudacao = nome ? `👋 Oi, ${nome}!\n\n` : ""
+  return `${saudacao}💰 *MENU DO BOT FINANÇAS*
+
+Responda com o número da opção:
+
+1. 💸 Registrar gasto
+2. 💰 Registrar entrada
+3. 📊 Ver resumo
+4. 🧾 Ver histórico
+5. 📁 Exportar planilha
+6. 🎯 Metas
+7. 📋 Ajuda completa
+
+Você também pode mandar direto:
+mercado 35
+gastei 35 no mercado
+recebi 2500 salario
+planilha
+exportar planilha
+resumo
+
+Atalhos:
+saldo = resumo
+extrato = histórico
+planilha = gerar Excel
+csv = gerar CSV`
+}
+
+export function fmtMenuMetasTexto() {
+  return `🎯 *MENU DE METAS*
+
+Responda com o número da opção:
+
+1. Criar meta
+2. Ver metas
+3. Voltar ao menu
+
+Exemplo direto:
+meta mercado 600`
+}
+
+export function fmtOrientacaoGasto() {
+  return `💸 *Qual gasto você quer registrar?*
+
+Exemplos:
+mercado 35
+uber 12,50
+paguei 50 internet`
+}
+
+export function fmtOrientacaoEntrada() {
+  return `💰 *Qual entrada você quer registrar?*
+
+Exemplos:
+recebi 2500 salario
+pix 200
+comissão 1250`
+}
+
+export function fmtOrientacaoMeta() {
+  return `🎯 *Qual meta você quer criar?*
+
+Envie a categoria e o valor.
+Exemplo:
+meta mercado 600`
+}
+
+export function fmtFallbackMenuInterativo() {
+  return `Se o menu interativo não abrir, responda:
+menu texto
+
+Você também pode usar:
+3 - resumo
+5 - planilha`
+}
+
 /**
  * Mensagem curta de boas-vindas para primeiro contato.
  * @returns {string}

@@ -16,7 +16,7 @@ import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from
 import { enviar, handleRespostaCaixinha, processarMensagem } from "./commands.js"
 import {
   fmtBetaFechado, fmtBoasVindas, fmtNomeInvalido, fmtNomeSalvo,
-  fmtSaudacaoUsuario, obterNomeExibicaoUsuario,
+  obterNomeExibicaoUsuario,
 } from "./formatters.js"
 import { normalizarNomeUsuario, parseSaudacao }               from "./validators.js"
 import { iniciarScheduler }                                  from "./scheduler.js"
@@ -27,6 +27,10 @@ import {
   registrarMensagemIgnorada,
   registrarMensagemProcessada,
 } from "./runtimeState.js"
+import {
+  normalizarMensagemRecebida,
+  sendMenuMessage,
+} from "./interactiveMessages.js"
 
 // ── Estado global ──────────────────────────────────────────────────────────────
 let tentativas   = 0
@@ -257,11 +261,7 @@ export async function iniciarBot() {
 
     const messageId = msg.key.id
 
-    const text =
-      msg.message?.conversation ||
-      msg.message?.extendedTextMessage?.text || ""
-
-    const mensagem = text.trim()
+    const mensagem = normalizarMensagemRecebida(msg.message).trim()
     if (!mensagem) return
 
     try {
@@ -398,7 +398,10 @@ export async function iniciarBot() {
       if (saudacao) {
         const nome = obterNomeExibicaoUsuario(usuario)
         if (nome) {
-          await enviar(sock, from, fmtSaudacaoUsuario(nome))
+          await sendMenuMessage(sock, from, usuarioId, {
+            contexto: "principal",
+            nome,
+          })
         } else {
           atualizarUsuario(usuarioId, { aguardando_nome: 1 })
           await enviar(sock, from, fmtBoasVindas())

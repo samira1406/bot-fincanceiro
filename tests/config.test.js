@@ -11,6 +11,38 @@ import {
 } from "../src/config.js"
 
 describe("config - beta fechado", () => {
+  it("mantém mensagens interativas desligadas por padrão", () => {
+    const config = carregarConfig({})
+
+    expect(config.whatsappInteractiveEnabled).toBe(false)
+    expect(config.whatsappMenuMode).toBe("text")
+  })
+
+  it("permite ativar mensagens interativas explicitamente", () => {
+    const config = carregarConfig({
+      WHATSAPP_INTERACTIVE_ENABLED: "true",
+    })
+
+    expect(config.whatsappInteractiveEnabled).toBe(true)
+    expect(config.whatsappMenuMode).toBe("interactive")
+  })
+
+  it("WHATSAPP_MENU_MODE=text força o modo seguro mesmo com interativo habilitado", () => {
+    const config = carregarConfig({
+      WHATSAPP_INTERACTIVE_ENABLED: "true",
+      WHATSAPP_MENU_MODE: "text",
+    })
+
+    expect(config.whatsappInteractiveEnabled).toBe(true)
+    expect(config.whatsappMenuMode).toBe("text")
+  })
+
+  it("aceita o modo auto com fallback textual completo", () => {
+    expect(carregarConfig({
+      WHATSAPP_MENU_MODE: "auto",
+    }).whatsappMenuMode).toBe("auto")
+  })
+
   it("mantém beta desligado quando BETA_MODE está ausente", () => {
     const config = carregarConfig({})
 

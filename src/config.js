@@ -33,6 +33,14 @@ function firstEnv(env, keys, fallback) {
   throw new Error(`Variável de ambiente obrigatória não definida: ${keys.join(" ou ")}`)
 }
 
+function menuModeEnv(env) {
+  const modo = String(env.WHATSAPP_MENU_MODE ?? "").trim().toLowerCase()
+  if (["text", "interactive", "auto"].includes(modo)) return modo
+  return boolEnv(env, "WHATSAPP_INTERACTIVE_ENABLED", false)
+    ? "interactive"
+    : "text"
+}
+
 export function normalizarNumeroWhatsApp(valor) {
   const base = String(valor ?? "").split("@")[0].split(":")[0]
   return base.replace(/\D/g, "")
@@ -146,6 +154,8 @@ export function carregarConfig(env = process.env) {
     // Comportamento
     timeoutEstadoMs:    Number(requireEnv(env, "TIMEOUT_ESTADO_MINUTOS", "10")) * 60_000,
     horaLembreteMensal: Number(requireEnv(env, "HORA_LEMBRETE_MENSAL", "20")),
+    whatsappInteractiveEnabled: boolEnv(env, "WHATSAPP_INTERACTIVE_ENABLED", false),
+    whatsappMenuMode: menuModeEnv(env),
 
     // Rate limiting
     rateLimitPorMinuto: Number(requireEnv(env, "RATE_LIMIT_MSG_POR_MINUTO", "15")),

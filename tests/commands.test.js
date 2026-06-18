@@ -13,6 +13,8 @@ const configMock = vi.hoisted(() => {
       valorMaximo:         100_000,
       caixinhaPercentual:  0.3,
       timeoutEstadoMs:     600_000,
+      whatsappInteractiveEnabled: false,
+      whatsappMenuMode:    "text",
       beta:                { ativo: false, responderBloqueado: false, numerosAutorizados: [] },
     },
     normalizarNumeroBeta,
@@ -58,6 +60,10 @@ const {
   obterPendenciaLancamento,
   resetPendenciasLancamentoParaTestes,
 } = await import("../src/pendingLancamentos.js")
+const {
+  obterMenuPendente,
+  resetMenusPendentesParaTestes,
+} = await import("../src/interactiveMessages.js")
 
 let sock
 
@@ -81,12 +87,15 @@ function periodoAtualTeste() {
 
 beforeEach(() => {
   resetPendenciasLancamentoParaTestes()
+  resetMenusPendentesParaTestes()
   db.exec(`
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
     DELETE FROM usuarios;
   `)
-  sock = { sendMessage: vi.fn() }
+  sock = { sendMessage: vi.fn(), relayMessage: vi.fn() }
+  configMock.config.whatsappInteractiveEnabled = false
+  configMock.config.whatsappMenuMode = "text"
   configMock.config.beta = { ativo: false, responderBloqueado: false, numerosAutorizados: [] }
 })
 
@@ -192,6 +201,154 @@ describe("processarMensagem - ajuda e onboarding", () => {
     expect(ultimaResposta()).toContain("Não consegui entender essa mensagem")
     expect(ultimaResposta()).toContain("recebi 2500 salario")
     expect(ultimaResposta()).toContain("ajuda")
+  })
+})
+
+describe("processarMensagem - menu textual e interativo", () => {
+  it("menu usa fallback textual e cria estado pendente por usuário", async () => {
+    prepararUsuario("user-menu")
+
+    await processarMensagem(sock, "grupo", "user-menu", "menu")
+
+    expect(sock.relayMessage).not.toHaveBeenCalled()
+    expect(ultimaResposta()).toContain("Responda com o número da opção")
+    expect(ultimaResposta()).toContain("1. 💸 Registrar gasto")
+    expect(ultimaResposta()).toContain("7. 📋 Ajuda completa")
+    expect(obterMenuPendente("user-menu")).toMatchObject({ contexto: "principal" })
+    expect(obterMenuPendente("outro-user")).toBeNull()
+  })
+
+  it("opção 1 após menu inicia orientação de gasto", async () => {
+    prepararUsuario("user-menu-1")
+
+    await processarMensagem(sock, "grupo", "user-menu-1", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-1", "1")
+
+    expect(ultimaResposta()).toContain("Qual gasto você quer registrar")
+    expect(ultimaResposta()).toContain("mercado 35")
+    expect(obterMenuPendente("user-menu-1")).toBeNull()
+  })
+
+  it("opção 2 após menu inicia orientação de entrada", async () => {
+    prepararUsuario("user-menu-2")
+
+    await processarMensagem(sock, "grupo", "user-menu-2", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-2", "2")
+
+    expect(ultimaResposta()).toContain("Qual entrada você quer registrar")
+    expect(ultimaResposta()).toContain("recebi 2500 salario")
+  })
+
+  it("opção 3 após menu executa resumo", async () => {
+    prepararUsuario("user-menu-3")
+
+    await processarMensagem(sock, "grupo", "user-menu-3", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-3", "3")
+
+    expect(ultimaResposta()).toContain("RESUMO")
+    expect(ultimaResposta()).toContain("Saldo")
+  })
+
+  it("opção 4 após menu executa histórico", async () => {
+    prepararUsuario("user-menu-4")
+    inserirLancamento({
+      usuarioId: "user-menu-4",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(sock, "grupo", "user-menu-4", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-4", "4")
+
+    expect(ultimaResposta()).toContain("Últimos lançamentos")
+    expect(ultimaResposta()).toContain("Mercado")
+  })
+
+  it("opção 5 após menu gera planilha", async () => {
+    prepararUsuario("user-menu-5")
+    inserirLancamento({
+      usuarioId: "user-menu-5",
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+      mes: mesAtual(),
+    })
+
+    await processarMensagem(sock, "grupo", "user-menu-5", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-5", "5")
+
+    const [, documento] = chamadaDocumento()
+    expect(documento.fileName).toMatch(/\.xlsx$/)
+    expect(ultimaResposta()).toContain("planilha Excel foi gerada")
+  })
+
+  it("opção 6 abre menu de metas e suas opções funcionam", async () => {
+    prepararUsuario("user-menu-6")
+
+    await processarMensagem(sock, "grupo", "user-menu-6", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-6", "6")
+
+    expect(ultimaResposta()).toContain("MENU DE METAS")
+    expect(obterMenuPendente("user-menu-6")).toMatchObject({ contexto: "metas" })
+
+    await processarMensagem(sock, "grupo", "user-menu-6", "1")
+    expect(ultimaResposta()).toContain("Qual meta você quer criar")
+    expect(ultimaResposta()).toContain("meta mercado 600")
+  })
+
+  it("opção 7 mostra ajuda completa", async () => {
+    prepararUsuario("user-menu-7")
+
+    await processarMensagem(sock, "grupo", "user-menu-7", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-7", "7")
+
+    expect(ultimaResposta()).toContain("MENU DO BOT FINANÇAS")
+    expect(ultimaResposta()).toContain("Corrigir ou excluir")
+    expect(ultimaResposta()).toContain("corrigir ultimo para 45")
+  })
+
+  it("envia menu interativo quando a configuração está ativa", async () => {
+    configMock.config.whatsappInteractiveEnabled = true
+    configMock.config.whatsappMenuMode = "interactive"
+    prepararUsuario("user-menu-interativo")
+
+    await processarMensagem(sock, "grupo", "user-menu-interativo", "menu")
+
+    expect(sock.relayMessage).toHaveBeenCalledOnce()
+    expect(ultimaResposta()).toContain("menu texto")
+  })
+
+  it("menu texto força fallback mesmo no modo interativo", async () => {
+    configMock.config.whatsappInteractiveEnabled = true
+    configMock.config.whatsappMenuMode = "interactive"
+    prepararUsuario("user-menu-texto")
+
+    await processarMensagem(sock, "grupo", "user-menu-texto", "menu texto")
+
+    expect(sock.relayMessage).not.toHaveBeenCalled()
+    expect(ultimaResposta()).toContain("MENU DO BOT FINANÇAS")
+    expect(ultimaResposta()).toContain("Responda com o número da opção")
+  })
+
+  it("pendência de valor ambíguo tem prioridade sobre opção de menu", async () => {
+    prepararUsuario("user-menu-pendencia")
+
+    await processarMensagem(sock, "grupo", "user-menu-pendencia", "1250")
+    await processarMensagem(sock, "grupo", "user-menu-pendencia", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-pendencia", "2")
+
+    expect(getUltimoLancamento("user-menu-pendencia")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-menu-pendencia")).toMatchObject({
+      etapa: "categoria",
+      tipo: "gasto",
+      valor: 1250,
+    })
+    expect(ultimaResposta()).toContain("vou registrar como gasto")
+    expect(ultimaResposta()).not.toContain("Qual entrada você quer registrar")
   })
 })
 
