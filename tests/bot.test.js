@@ -445,6 +445,9 @@ describe("bot - conversas privadas e grupos", () => {
     "resumo",
     "planilha",
     "exportar planilha",
+    "mercado",
+    "obrigado",
+    "planiha",
   ])("não salva %s como nome enquanto aguarda cadastro", async (texto) => {
     criarUsuario("5515000000005")
 

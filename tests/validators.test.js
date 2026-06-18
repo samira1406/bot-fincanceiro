@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from "vitest"
 import {
+  classificarMensagemDesconhecida,
   ehNomeUsuarioValido, normalizarNomeUsuario,
   isCancelamentoPendencia, parseCategoriaLancamentoPendente,
   parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
@@ -34,6 +35,9 @@ describe("nomes de usuário", () => {
     "resumo",
     "historico",
     "salario 200",
+    "mercado",
+    "obrigado",
+    "planiha",
   ])("rejeita %s como nome", (mensagem) => {
     expect(ehNomeUsuarioValido(mensagem)).toBe(false)
     expect(normalizarNomeUsuario(mensagem)).toBeNull()
@@ -295,6 +299,66 @@ describe("parseValorAmbiguo", () => {
   it("não trata texto aleatório como valor", () => {
     expect(parseValorAmbiguo("Sadu")).toBeNull()
   })
+
+  it.each([
+    ["R$ 300", 300],
+    ["300 reais", 300],
+    ["1.250", 1250],
+  ])("identifica valor flexível %s", (mensagem, valor) => {
+    expect(parseValorAmbiguo(mensagem)).toEqual({ valor })
+  })
+})
+
+describe("classificarMensagemDesconhecida", () => {
+  it("classifica categoria comum sem valor", () => {
+    expect(classificarMensagemDesconhecida("mercado")).toEqual({
+      motivo: "categoria_sem_valor",
+      categoria: "mercado",
+    })
+  })
+
+  it.each([
+    ["planiha", "planilha"],
+    ["resumoo", "resumo"],
+    ["hstoric", "historico"],
+    ["ajdua", "ajuda"],
+  ])("sugere %s para typo %s", (mensagem, comandoSugerido) => {
+    expect(classificarMensagemDesconhecida(mensagem)).toEqual({
+      motivo: "comando_com_typo",
+      comandoSugerido,
+    })
+  })
+
+  it.each([
+    "obrigado",
+    "valeu",
+    "ok",
+    "beleza",
+  ])("classifica agradecimento %s", (mensagem) => {
+    expect(classificarMensagemDesconhecida(mensagem)).toEqual({
+      motivo: "agradecimento",
+    })
+  })
+
+  it("classifica valor com descrição de tipo ambíguo", () => {
+    expect(classificarMensagemDesconhecida("300 manutenção")).toEqual({
+      motivo: "valor_com_descricao_ambigua",
+      valor: 300,
+      descricao: "manutencao",
+      categoria: "manutencao",
+    })
+  })
+
+  it("não intercepta categoria segura com valor", () => {
+    expect(classificarMensagemDesconhecida("300 mercado").motivo)
+      .toBe("desconhecido_total")
+  })
+
+  it("classifica texto aleatório como desconhecido total", () => {
+    expect(classificarMensagemDesconhecida("banana azul")).toEqual({
+      motivo: "desconhecido_total",
+    })
+  })
 })
 
 describe("pendência de lançamento", () => {
@@ -340,6 +404,15 @@ describe("pendência de lançamento", () => {
 
   it("rejeita categoria apenas numérica", () => {
     expect(parseCategoriaLancamentoPendente("2")).toBeNull()
+  })
+
+  it.each([
+    "sei la",
+    "sei lá",
+    "não sei",
+    "talvez",
+  ])("rejeita resposta vaga %s como categoria", (mensagem) => {
+    expect(parseCategoriaLancamentoPendente(mensagem)).toBeNull()
   })
 })
 

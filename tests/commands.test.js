@@ -31,6 +31,7 @@ vi.mock("../src/config.js", () => ({
   config: configMock.config,
   normalizarNumeroBeta: configMock.normalizarNumeroBeta,
   mascararNumeroBeta: configMock.mascararNumeroBeta,
+  mascararIdentificadorBeta: configMock.mascararNumeroBeta,
   usuarioAutorizadoBeta: (usuarioId, beta = configMock.config.beta) => {
     if (!beta?.ativo) return true
 
@@ -50,7 +51,7 @@ vi.mock("../src/logger.js", () => ({
   logMensagem: vi.fn(),
 }))
 
-const { processarMensagem } = await import("../src/commands.js")
+const { handleRespostaCaixinha, processarMensagem } = await import("../src/commands.js")
 const {
   criarUsuario, atualizarUsuario, inserirLancamento,
   criarOuAtualizarMetaCategoria,
@@ -64,6 +65,10 @@ const {
   obterMenuPendente,
   resetMenusPendentesParaTestes,
 } = await import("../src/interactiveMessages.js")
+const {
+  obterRuntimeState,
+  resetRuntimeStateParaTestes,
+} = await import("../src/runtimeState.js")
 
 let sock
 
@@ -88,6 +93,7 @@ function periodoAtualTeste() {
 beforeEach(() => {
   resetPendenciasLancamentoParaTestes()
   resetMenusPendentesParaTestes()
+  resetRuntimeStateParaTestes()
   db.exec(`
     DELETE FROM metas_categoria;
     DELETE FROM lancamentos;
@@ -198,9 +204,166 @@ describe("processarMensagem - ajuda e onboarding", () => {
 
     await processarMensagem(sock, "grupo", "user-a", "banana azul")
 
-    expect(ultimaResposta()).toContain("Não consegui entender essa mensagem")
+    expect(ultimaResposta()).toContain("ainda não entendi direitinho")
     expect(ultimaResposta()).toContain("recebi 2500 salario")
-    expect(ultimaResposta()).toContain("ajuda")
+    expect(ultimaResposta()).toContain("menu")
+  })
+})
+
+describe("processarMensagem - fallback inteligente", () => {
+  it("texto totalmente desconhecido retorna ajuda bonita sem registrar", async () => {
+    prepararUsuario("user-fallback-geral")
+
+    await processarMensagem(sock, "grupo", "user-fallback-geral", "banana azul")
+
+    expect(getUltimoLancamento("user-fallback-geral")).toBeNull()
+    expect(ultimaResposta()).toContain("Teste, ainda não entendi direitinho")
+    expect(ultimaResposta()).toContain("mercado 35")
+    expect(ultimaResposta()).toContain("menu")
+  })
+
+  it("categoria comum sem valor pede o valor", async () => {
+    prepararUsuario("user-categoria-sem-valor")
+
+    await processarMensagem(sock, "grupo", "user-categoria-sem-valor", "mercado")
+
+    expect(getUltimoLancamento("user-categoria-sem-valor")).toBeNull()
+    expect(ultimaResposta()).toContain("categoria Mercado")
+    expect(ultimaResposta()).toContain("faltou o valor")
+    expect(ultimaResposta()).toContain("mercado 35")
+  })
+
+  it.each([
+    ["planiha", "planilha"],
+    ["resumoo", "resumo"],
+    ["hstoric", "historico"],
+    ["ajdua", "ajuda"],
+  ])("typo %s sugere %s sem registrar", async (mensagem, sugestao) => {
+    const usuarioId = `user-typo-${mensagem}`
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, mensagem)
+
+    expect(getUltimoLancamento(usuarioId)).toBeNull()
+    expect(ultimaResposta()).toContain(`quis dizer “${sugestao}”`)
+  })
+
+  it.each([
+    "obrigado",
+    "valeu",
+    "ok",
+    "beleza",
+  ])("%s recebe resposta amigável sem registrar", async (mensagem) => {
+    const usuarioId = `user-agradecimento-${mensagem}`
+    prepararUsuario(usuarioId)
+
+    await processarMensagem(sock, "grupo", usuarioId, mensagem)
+
+    expect(getUltimoLancamento(usuarioId)).toBeNull()
+    expect(ultimaResposta()).toContain("Por nada")
+    expect(ultimaResposta()).toContain("resumo")
+  })
+
+  it("descrição financeira ambígua pergunta o tipo e usa os dados originais", async () => {
+    prepararUsuario("user-descricao-ambigua")
+
+    await processarMensagem(sock, "grupo", "user-descricao-ambigua", "300 manutenção")
+
+    expect(getUltimoLancamento("user-descricao-ambigua")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-descricao-ambigua")).toMatchObject({
+      etapa: "tipo",
+      valor: 300,
+      nome: "manutencao",
+      categoria: "manutencao",
+    })
+    expect(ultimaResposta()).toContain("descrição “manutencao”")
+    expect(ultimaResposta()).toContain("1 - Entrada")
+    expect(ultimaResposta()).toContain("2 - Gasto")
+
+    await processarMensagem(sock, "grupo", "user-descricao-ambigua", "2")
+
+    expect(getUltimoLancamento("user-descricao-ambigua")).toMatchObject({
+      tipo: "gasto",
+      valor: 300,
+      categoria: "manutencao",
+    })
+  })
+
+  it("durante pendência de categoria resposta vaga relembra o que falta", async () => {
+    prepararUsuario("user-pendencia-vaga")
+
+    await processarMensagem(sock, "grupo", "user-pendencia-vaga", "1250")
+    await processarMensagem(sock, "grupo", "user-pendencia-vaga", "2")
+    await processarMensagem(sock, "grupo", "user-pendencia-vaga", "sei la")
+
+    expect(getUltimoLancamento("user-pendencia-vaga")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-pendencia-vaga")).toMatchObject({
+      etapa: "categoria",
+      tipo: "gasto",
+      valor: 1250,
+    })
+    expect(ultimaResposta()).toContain("categoria")
+    expect(ultimaResposta()).toContain("gasto de R$ 1.250,00")
+    expect(ultimaResposta()).toContain("cancelar")
+  })
+
+  it("aceita formatos monetários naturais sem registrar imediatamente", async () => {
+    prepararUsuario("user-valor-flexivel")
+
+    await processarMensagem(sock, "grupo", "user-valor-flexivel", "R$ 300")
+
+    expect(getUltimoLancamento("user-valor-flexivel")).toBeNull()
+    expect(obterPendenciaLancamento("grupo", "user-valor-flexivel")).toMatchObject({
+      valor: 300,
+      etapa: "tipo",
+    })
+  })
+
+  it("comando exemplos mostra sugestões rápidas", async () => {
+    prepararUsuario("user-exemplos")
+
+    await processarMensagem(sock, "grupo", "user-exemplos", "exemplos")
+
+    expect(ultimaResposta()).toContain("Exemplos rápidos")
+    expect(ultimaResposta()).toContain("paguei 50 internet")
+    expect(ultimaResposta()).toContain("recebi 1250 em comissão")
+  })
+
+  it("registra somente o motivo do fallback no estado interno", async () => {
+    prepararUsuario("user-evento-fallback")
+
+    await processarMensagem(sock, "grupo", "user-evento-fallback", "banana azul")
+
+    const evento = obterRuntimeState().eventos.find(item => item.tipo === "fallback_acionado")
+    expect(evento.detalhes).toEqual({ motivo: "desconhecido_total" })
+    expect(JSON.stringify(evento)).not.toContain("banana azul")
+    expect(JSON.stringify(evento)).not.toContain("user-evento-fallback")
+    expect(obterRuntimeState().bot.fallbacksAcionados).toBe(1)
+  })
+
+  it("cancelar também encerra a pendência da caixinha", async () => {
+    prepararUsuario("user-caixinha-cancelar")
+    atualizarUsuario("user-caixinha-cancelar", {
+      aguardando_caixinha: 1,
+      valor_sugerido_caixinha: 100,
+      estado_expira_em: Date.now() + 60_000,
+    })
+
+    await handleRespostaCaixinha(
+      sock,
+      "grupo",
+      "user-caixinha-cancelar",
+      "Teste",
+      "cancelar"
+    )
+
+    expect(getUsuario("user-caixinha-cancelar")).toMatchObject({
+      aguardando_caixinha: 0,
+      valor_sugerido_caixinha: 0,
+      estado_expira_em: null,
+    })
+    expect(getUltimoLancamento("user-caixinha-cancelar")).toBeNull()
+    expect(ultimaResposta()).toContain("cancelei esse fluxo")
   })
 })
 
@@ -332,6 +495,17 @@ describe("processarMensagem - menu textual e interativo", () => {
     expect(sock.relayMessage).not.toHaveBeenCalled()
     expect(ultimaResposta()).toContain("MENU DO BOT FINANÇAS")
     expect(ultimaResposta()).toContain("Responda com o número da opção")
+  })
+
+  it("cancelar sai do menu pendente sem executar opção", async () => {
+    prepararUsuario("user-menu-cancelar")
+
+    await processarMensagem(sock, "grupo", "user-menu-cancelar", "menu")
+    await processarMensagem(sock, "grupo", "user-menu-cancelar", "cancelar")
+
+    expect(obterMenuPendente("user-menu-cancelar")).toBeNull()
+    expect(getUltimoLancamento("user-menu-cancelar")).toBeNull()
+    expect(ultimaResposta()).toContain("saí desse menu")
   })
 
   it("pendência de valor ambíguo tem prioridade sobre opção de menu", async () => {

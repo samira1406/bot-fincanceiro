@@ -23,6 +23,7 @@ import {
   fmtValor, fmtLista, fmtRelatorioMensal, fmtRelatorioGeral,
   fmtCategorias, fmtSaldo, fmtBarraMeta, fmtHistoricoLancamentos,
   fmtAjuda, fmtBetaFechado, fmtMensagemNaoEntendida,
+  fmtExemplosRapidos, formatarMensagemNaoEntendida,
   fmtTituloResumo, obterNomeExibicaoUsuario,
   fmtCategoriaPendente, fmtPendenciaCancelada, fmtValorAmbiguo,
   fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
@@ -33,6 +34,7 @@ import {
   fmtMetaCategoriaUltrapassada,
 } from "./formatters.js"
 import {
+  classificarMensagemDesconhecida,
   parseAjuda, parseCorrecaoUltimo, parseExportacao, parseLancamento,
   isCancelamentoPendencia, parseCategoriaLancamentoPendente,
   parseMetaCategoria, parseTipoLancamentoPendente,
@@ -45,6 +47,7 @@ import {
 import {
   limparMenuPendente, obterMenuPendente, sendMenuMessage,
 } from "./interactiveMessages.js"
+import { registrarFallbackAcionado } from "./runtimeState.js"
 
 // ── Envio seguro ──────────────────────────────────────────────────────────────
 
@@ -429,6 +432,16 @@ export async function handleRespostaCaixinha(sock, from, usuarioId, nome, mensag
   const lower = mensagem.toLowerCase().trim()
   const nomeExibicao = obterNomeExibicaoUsuario(nome) ?? "Usuário"
 
+  if (isCancelamentoPendencia(mensagem)) {
+    atualizarUsuario(usuarioId, {
+      aguardando_caixinha: 0,
+      valor_sugerido_caixinha: 0,
+      estado_expira_em: null,
+    })
+    await enviar(sock, from, "Tudo bem, cancelei esse fluxo. Nada foi registrado.")
+    return
+  }
+
   if (lower === "sim") {
     const u     = getUsuario(usuarioId)
     const valor = u.valor_sugerido_caixinha ?? 0
@@ -515,6 +528,7 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     "iniciar_gasto":   () => enviar(sock, from, fmtOrientacaoGasto()),
     "iniciar_entrada": () => enviar(sock, from, fmtOrientacaoEntrada()),
     "iniciar_meta":    () => enviar(sock, from, fmtOrientacaoMeta()),
+    "exemplos":        () => enviar(sock, from, fmtExemplosRapidos()),
     "menu_metas":      () => handleMenuMetas(sock, from, usuarioId),
     "resumo":          () => handleResumo(sock, from, usuarioId, nomeSalvo),
     "saldo":           () => handleResumo(sock, from, usuarioId, nomeSalvo),
@@ -593,18 +607,39 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
       if (pendencia.etapa === "tipo") {
         const tipo = parseTipoLancamentoPendente(mensagem)
         if (!tipo) {
-          await enviar(sock, from, fmtValorAmbiguo(pendencia.valor))
+          registrarFallbackAcionado("pendencia_incompleta")
+          await enviar(sock, from, formatarMensagemNaoEntendida({
+            motivo: "pendencia_incompleta",
+            pendencia,
+            nome: nomeSalvo,
+          }))
           return
         }
 
-        selecionarTipoPendencia(from, usuarioId, tipo)
+        const atualizada = selecionarTipoPendencia(from, usuarioId, tipo)
+        if (atualizada?.nome && atualizada?.categoria) {
+          await registrarLancamentoComConfirmacao(sock, from, usuarioId, nome, {
+            tipo,
+            valor: atualizada.valor,
+            nome: atualizada.nome,
+            categoria: atualizada.categoria,
+          })
+          limparPendenciaLancamento(from, usuarioId)
+          return
+        }
+
         await enviar(sock, from, fmtCategoriaPendente(tipo))
         return
       }
 
       const categoriaPendente = parseCategoriaLancamentoPendente(mensagem)
       if (!categoriaPendente) {
-        await enviar(sock, from, fmtCategoriaPendente(pendencia.tipo))
+        registrarFallbackAcionado("pendencia_incompleta")
+        await enviar(sock, from, formatarMensagemNaoEntendida({
+          motivo: "pendencia_incompleta",
+          pendencia,
+          nome: nomeSalvo,
+        }))
         return
       }
 
@@ -619,6 +654,12 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   }
 
   const menuPendente = obterMenuPendente(usuarioId)
+  if (menuPendente && isCancelamentoPendencia(mensagem)) {
+    limparMenuPendente(usuarioId)
+    await enviar(sock, from, "Tudo bem, saí desse menu. Nada foi registrado.")
+    return
+  }
+
   if (menuPendente && /^\d+$/.test(lower)) {
     const processado = await handleRespostaMenuPendente(
       sock,
@@ -686,9 +727,29 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     return
   }
 
+  const classificacaoPrevia = classificarMensagemDesconhecida(mensagem)
+  if (classificacaoPrevia.motivo === "valor_com_descricao_ambigua") {
+    limparMenuPendente(usuarioId)
+    iniciarPendenciaLancamento(from, usuarioId, classificacaoPrevia.valor, {
+      nome: classificacaoPrevia.descricao,
+      categoria: classificacaoPrevia.categoria,
+    })
+    registrarFallbackAcionado(classificacaoPrevia.motivo)
+    await enviar(sock, from, formatarMensagemNaoEntendida({
+      ...classificacaoPrevia,
+      nome: nomeSalvo,
+    }))
+    return
+  }
+
   const lancamento = parseLancamento(mensagem)
   if (!lancamento) {
-    await enviar(sock, from, fmtMensagemNaoEntendida())
+    const classificacao = classificarMensagemDesconhecida(mensagem)
+    registrarFallbackAcionado(classificacao.motivo)
+    await enviar(sock, from, fmtMensagemNaoEntendida({
+      ...classificacao,
+      nome: nomeSalvo,
+    }))
     return
   }
 

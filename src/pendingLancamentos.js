@@ -11,12 +11,14 @@ function expirou(pendencia, agora = Date.now()) {
   return agora - pendencia.atualizadoEm > limite
 }
 
-export function iniciarPendenciaLancamento(from, usuarioId, valor) {
+export function iniciarPendenciaLancamento(from, usuarioId, valor, dados = {}) {
   const agora = Date.now()
   const pendencia = {
     etapa: "tipo",
     valor,
     tipo: null,
+    nome: dados.nome ?? null,
+    categoria: dados.categoria ?? null,
     criadoEm: agora,
     atualizadoEm: agora,
   }

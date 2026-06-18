@@ -6,6 +6,7 @@ import {
   fmtMenuMetasTexto, fmtMenuPrincipalTexto,
   fmtFallbackMenuInterativo,
   fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
+  fmtExemplosRapidos, formatarMensagemNaoEntendida,
   fmtValorAmbiguo,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
@@ -115,9 +116,39 @@ describe("mensagens de ajuda e onboarding", () => {
   it("formata mensagem de erro amigável", () => {
     const texto = fmtMensagemNaoEntendida()
 
-    expect(texto).toContain("Não consegui entender essa mensagem")
-    expect(texto).toContain("gastei 35 no mercado")
-    expect(texto).toContain("ajuda")
+    expect(texto).toContain("ainda não entendi direitinho")
+    expect(texto).toContain("mercado 35")
+    expect(texto).toContain("menu")
+  })
+
+  it("formata fallbacks específicos com linguagem curta", () => {
+    expect(formatarMensagemNaoEntendida({
+      motivo: "categoria_sem_valor",
+      categoria: "mercado",
+      nome: "Sadu",
+    })).toContain("Sadu, entendi a categoria Mercado")
+
+    expect(formatarMensagemNaoEntendida({
+      motivo: "comando_com_typo",
+      comandoSugerido: "planilha",
+    })).toContain("quis dizer “planilha”")
+
+    expect(formatarMensagemNaoEntendida({
+      motivo: "agradecimento",
+    })).toContain("Por nada")
+
+    expect(formatarMensagemNaoEntendida({
+      motivo: "pendencia_incompleta",
+      pendencia: { etapa: "categoria", tipo: "gasto", valor: 1250 },
+    })).toContain("gasto de R$ 1.250,00")
+  })
+
+  it("formata exemplos rápidos naturais", () => {
+    const texto = fmtExemplosRapidos()
+
+    expect(texto).toContain("mercado 35")
+    expect(texto).toContain("paguei 50 internet")
+    expect(texto).toContain("recebi 1250 em comissão")
   })
 
   it("formata mensagem de beta fechado", () => {

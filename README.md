@@ -242,6 +242,51 @@ respostas `1` e `2` continuam significando entrada e gasto.
 `comandos`, `como usar` e a opção `Ajuda completa` exibem o guia textual
 detalhado com exemplos de todos os recursos.
 
+### Fallback inteligente
+
+O bot procura orientar em vez de responder com um erro genérico. Nenhum
+lançamento é criado quando a mensagem ainda deixa dúvida relevante.
+
+Exemplos:
+
+```text
+mercado
+```
+
+Pede o valor e mostra `mercado 35`.
+
+```text
+R$ 300
+```
+
+Cria uma pendência e pergunta se é entrada ou gasto.
+
+```text
+300 manutenção
+```
+
+Confirma o tipo antes de registrar, preservando o valor e a descrição.
+
+```text
+planiha
+```
+
+Sugere o comando correto `planilha`.
+
+```text
+obrigado
+```
+
+Responde de forma curta e amigável, sem registrar nada.
+
+Durante uma pendência, respostas vagas como `sei la` não viram categoria. O
+bot relembra o valor, o tipo escolhido e pede novamente a informação que
+falta. `cancelar`, `cancela`, `sair` e `voltar` encerram o fluxo sem registrar.
+
+O comando `exemplos` mostra sugestões rápidas de gastos, entradas e consultas.
+Eventos de fallback guardam apenas o motivo da classificação para diagnóstico;
+o texto enviado pelo usuário não é armazenado no painel.
+
 ### Lançamentos
 ```
 mercado 120,50                # gasto, categoria mercado

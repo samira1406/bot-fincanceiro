@@ -11,6 +11,7 @@ const estado = {
     lastMessageAt: null,
     lastError: null,
     mensagensProcessadas: 0,
+    fallbacksAcionados: 0,
     ignoradasBeta: 0,
     ignoradasGrupo: 0,
     ignoradasFromMe: 0,
@@ -83,6 +84,11 @@ export function registrarMensagemIgnorada(motivo, detalhes = {}) {
   registrarEvento(`mensagem_ignorada_${motivo}`, detalhes)
 }
 
+export function registrarFallbackAcionado(motivo) {
+  estado.bot.fallbacksAcionados += 1
+  registrarEvento("fallback_acionado", { motivo })
+}
+
 export function obterRuntimeState() {
   return {
     iniciadoEm: estado.iniciadoEm,
@@ -103,6 +109,7 @@ export function resetRuntimeStateParaTestes() {
     lastMessageAt: null,
     lastError: null,
     mensagensProcessadas: 0,
+    fallbacksAcionados: 0,
     ignoradasBeta: 0,
     ignoradasGrupo: 0,
     ignoradasFromMe: 0,

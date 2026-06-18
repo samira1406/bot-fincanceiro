@@ -89,10 +89,14 @@ export function fmtTituloResumo(usuarioOuNome) {
 export function fmtAjuda() {
   return `📋 *MENU DO BOT FINANÇAS*
 
+Você não precisa decorar comandos.
+Pode escrever de forma natural.
+
 1. 💸 *Registrar gasto*
    Envie algo como:
-   gastei 35 no mercado
    mercado 35
+   gastei 35 no mercado
+   paguei 50 internet
    uber 12,50
 
 2. 💰 *Registrar entrada*
@@ -100,6 +104,7 @@ export function fmtAjuda() {
    recebi 2500 salario
    recebi 1250 em freelance
    pix 200
+   recebi 1250 em comissão
 
 3. 📊 *Ver resumo*
    Mostra entradas, gastos e saldo do mês.
@@ -121,7 +126,10 @@ export function fmtAjuda() {
    Ajusta ou remove o último lançamento.
    Exemplos:
    corrigir ultimo para 45
-   excluir ultimo`
+   excluir ultimo
+
+Se eu ficar em dúvida, vou perguntar antes de registrar.
+Para exemplos rápidos, mande: exemplos`
 }
 
 export function fmtMenuPrincipalTexto(nome) {
@@ -190,6 +198,25 @@ export function fmtOrientacaoMeta() {
 Envie a categoria e o valor.
 Exemplo:
 meta mercado 600`
+}
+
+export function fmtExemplosRapidos() {
+  return `Exemplos rápidos:
+
+💸 Gastos:
+mercado 35
+paguei 50 internet
+uber 12,50
+
+💰 Entradas:
+recebi 2500 salario
+pix 200
+recebi 1250 em comissão
+
+📊 Consultas:
+resumo
+extrato
+planilha`
 }
 
 export function fmtFallbackMenuInterativo() {
@@ -273,15 +300,93 @@ Sadu`
  * Mensagem para quando o bot não entende o texto recebido.
  * @returns {string}
  */
-export function fmtMensagemNaoEntendida() {
-  return `Não consegui entender essa mensagem.
+export function formatarMensagemNaoEntendida(contexto = {}) {
+  const nome = obterNomeExibicaoUsuario(contexto.nome)
+  const motivo = contexto.motivo ?? "desconhecido_total"
 
-Tente algo como:
-gastei 35 no mercado
+  if (motivo === "categoria_sem_valor") {
+    const categoria = fmtCategoriaAmigavel(contexto.categoria)
+    const inicio = nome ? `${nome}, entendi` : "Entendi"
+    return `${inicio} a categoria ${categoria}, mas faltou o valor. 🙂
+
+Tente assim:
+${String(contexto.categoria).replace(/-/g, " ")} 35
+gastei 35 no ${String(contexto.categoria).replace(/-/g, " ")}
+
+Ou mande menu para ver as opções.`
+  }
+
+  if (motivo === "valor_com_descricao_ambigua") {
+    const descricao = String(contexto.descricao ?? "").replace(/-/g, " ")
+    const inicio = nome ? `${nome}, entendi` : "Entendi"
+    return `${inicio} o valor R$ ${fmtValor(contexto.valor)} e a descrição “${descricao}”, mas fiquei em dúvida no tipo. 🙂
+
+É:
+1 - Entrada
+2 - Gasto
+
+Ou mande completo:
+recebi ${fmtValor(contexto.valor)} ${descricao}
+gastei ${fmtValor(contexto.valor)} ${descricao}`
+  }
+
+  if (motivo === "comando_com_typo") {
+    const inicio = nome ? `${nome}, acho` : "Acho"
+    return `${inicio} que você quis dizer “${contexto.comandoSugerido}”. 🙂
+
+Envie:
+${contexto.comandoSugerido}
+
+Ou mande menu para ver as opções.`
+  }
+
+  if (motivo === "agradecimento") {
+    return `Por nada! 🙂
+
+Quando quiser, é só mandar:
+mercado 35
+recebi 2500 salario
+resumo`
+  }
+
+  if (motivo === "pendencia_incompleta") {
+    const pendencia = contexto.pendencia ?? {}
+    const tipo = pendencia.tipo === "entrada" ? "entrada" : "gasto"
+
+    if (pendencia.etapa === "categoria") {
+      return `Ainda preciso da categoria para registrar esse ${tipo} de R$ ${fmtValor(pendencia.valor)}. 🙂
+
+Exemplos:
+mercado
+aluguel
+internet
+
+Ou mande cancelar para desistir.`
+    }
+
+    return `Ainda preciso saber se o valor R$ ${fmtValor(pendencia.valor)} é entrada ou gasto. 🙂
+
+Responda:
+1 - Entrada
+2 - Gasto
+
+Ou mande cancelar para desistir.`
+  }
+
+  const inicio = nome ? `${nome}, ainda` : "Hmm, ainda"
+  return `${inicio} não entendi direitinho. 🙂
+
+Você pode mandar:
+mercado 35
 recebi 2500 salario
 resumo
+planilha
 
-Ou mande “ajuda” para ver os comandos.`
+Ou mande menu para ver as opções.`
+}
+
+export function fmtMensagemNaoEntendida(contexto = {}) {
+  return formatarMensagemNaoEntendida(contexto)
 }
 
 /**
@@ -290,7 +395,7 @@ Ou mande “ajuda” para ver os comandos.`
  * @returns {string}
  */
 export function fmtValorAmbiguo(valor) {
-  return `Entendi o valor R$ ${fmtValor(valor)}, mas preciso saber o tipo.
+  return `Entendi o valor R$ ${fmtValor(valor)}, mas preciso saber se é entrada ou gasto. 🙂
 
 Responda:
 1 - Entrada
