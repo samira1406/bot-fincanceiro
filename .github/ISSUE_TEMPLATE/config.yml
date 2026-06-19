@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Relatar vulnerabilidade
+    url: https://github.com/samira1406/bot-fincanceiro/security/advisories/new
+    about: Use um canal privado e nunca publique segredos ou dados pessoais.

@@ -1,17 +1,43 @@
+# Dependencies
 node_modules/
+
+# WhatsApp authentication and sessions
 auth/
 auth_antigo/
+
+# Database
 database/*.db
 database/*.db-wal
 database/*.db-shm
 database/backups/
-.env
-logs/
-logs/*.log
-coverage/
-exports/
 *.db
 *.db-*
+
+# Environment and local secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+logs/*.log
 *.log
+
+# Generated exports
+exports/
 *.csv
 *.xlsx
+
+# Tests and coverage
+coverage/
+
+# Local caches and temporary files
+.cache/
+tmp/
+*.tmp
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
