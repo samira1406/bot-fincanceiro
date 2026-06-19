@@ -68,8 +68,8 @@ describe("gerarFechamentoMensal", () => {
     })
     expect(fechamento.categorias).toEqual([
       { categoria: "mercado", total: 850 },
-      { categoria: "transporte", total: 220 },
-      { categoria: "pets", total: 120 },
+      { categoria: "uber", total: 220 },
+      { categoria: "petshop", total: 120 },
     ])
   })
 

@@ -441,9 +441,10 @@ export function isCancelamentoPendencia(mensagem) {
 /**
  * Normaliza a categoria/descrição informada na segunda etapa da pendência.
  * @param {string} mensagem
+ * @param {"gasto"|"entrada"} [tipo]
  * @returns {{ nome:string, categoria:string }|null}
  */
-export function parseCategoriaLancamentoPendente(mensagem) {
+export function parseCategoriaLancamentoPendente(mensagem, tipo = "gasto") {
   const texto = normalizarEspacos(String(mensagem ?? ""))
   const normalizado = normalizarComando(texto).replace(/\s+/g, " ")
   if (respostasCategoriaInvalidas.has(texto) || respostasCategoriaInvalidas.has(normalizado)) {
@@ -463,7 +464,7 @@ export function parseCategoriaLancamentoPendente(mensagem) {
   const nome = normalizarDescricaoLancamento(texto, "")
   if (!nome || !/\p{L}/u.test(nome)) return null
 
-  const categoria = normalizarCategoria(nome)
+  const categoria = normalizarCategoriaPorPalavraChave(nome, tipo)
   if (!categoriaValida(nome) || !categoriaValida(categoria)) return null
   return { nome, categoria }
 }

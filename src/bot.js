@@ -7,9 +7,9 @@ import qrcode  from "qrcode-terminal"
 import fs      from "fs-extra"
 
 import {
-  config, gerarVariantesNumeroBrasil, mascararIdentificadorBeta,
+  avaliarAutorizacaoBetaCandidatos, config,
+  gerarVariantesNumeroBrasil, mascararIdentificadorBeta,
   grupoAutorizadoBeta, mascararNumeroBeta, normalizarJidBeta, normalizarNumeroWhatsApp,
-  usuarioAutorizadoBeta,
 } from "./config.js"
 import { logger, logMensagem }                               from "./logger.js"
 import { getUsuario, criarUsuario, atualizarUsuario, limparEstadoExpirado } from "./database.js"
@@ -58,16 +58,14 @@ export function isJidGrupo(jid) {
 }
 
 function isJidLid(jid) {
-  return String(jid ?? "").toLowerCase().includes("@lid")
+  return normalizarJidBeta(jid).endsWith("@lid")
 }
 
 function valorDebugBeta(valor) {
-  if (config.beta?.debugMostrarRaw) return String(valor ?? "")
   return mascararIdentificadorBeta(valor)
 }
 
 function numeroDebugBeta(valor) {
-  if (config.beta?.debugMostrarRaw) return String(valor ?? "")
   return mascararNumeroBeta(valor)
 }
 
@@ -103,22 +101,167 @@ function logBetaDebug(dados) {
   }, "[BETA_DEBUG]")
 }
 
-export function extrairIdentificadorRemetente(msg) {
-  const remoteJid = msg?.key?.remoteJid ?? ""
-  const grupo = isJidGrupo(remoteJid)
+function valoresUnicos(valores) {
+  return [...new Set(valores.filter(Boolean))]
+}
 
-  const candidatos = grupo
-    ? [
-        { origem: "key.participant", valor: msg?.key?.participant },
-        { origem: "participant", valor: msg?.participant },
-        { origem: "message.participant", valor: msg?.message?.participant },
-      ].filter(c => c.valor)
-    : [
-        { origem: "remoteJid", valor: msg?.key?.remoteJid },
-        { origem: "key.participant", valor: msg?.key?.participant },
-        { origem: "participant", valor: msg?.participant },
-        { origem: "message.participant", valor: msg?.message?.participant },
-      ].filter(c => c.valor)
+/**
+ * Extrai apenas metadados de identificação. O conteúdo da mensagem não entra
+ * nos candidatos nem no bloco de debug.
+ */
+export function extractMessageIdentifiers(msg) {
+  const entradas = [
+    { origem: "key.remoteJid", valor: msg?.key?.remoteJid },
+    { origem: "key.participant", valor: msg?.key?.participant },
+    { origem: "msg.remoteJid", valor: msg?.remoteJid },
+    { origem: "msg.participant", valor: msg?.participant },
+    { origem: "msg.sender", valor: msg?.sender },
+    { origem: "message.remoteJid", valor: msg?.message?.remoteJid },
+    { origem: "message.participant", valor: msg?.message?.participant },
+  ].filter(entrada => entrada.valor)
+
+  const remoteJid = msg?.key?.remoteJid ??
+    msg?.remoteJid ??
+    msg?.message?.remoteJid ??
+    ""
+  const participant = msg?.key?.participant ??
+    msg?.participant ??
+    msg?.message?.participant ??
+    ""
+  const sender = msg?.sender || participant || remoteJid
+  const isGroup = isJidGrupo(remoteJid)
+  const extractedJids = valoresUnicos(
+    entradas
+      .map(entrada => normalizarJidBeta(entrada.valor))
+      .filter(jid => jid.includes("@"))
+  )
+  const candidateJids = extractedJids
+    .filter(jid => !jid.endsWith("@g.us"))
+  const candidateLids = candidateJids.filter(isJidLid)
+  const candidateWhatsAppJids = candidateJids
+    .filter(jid => jid.endsWith("@s.whatsapp.net"))
+  const candidateNumbers = valoresUnicos(
+    entradas
+      .filter(entrada => {
+        const jid = normalizarJidBeta(entrada.valor)
+        return !isJidLid(jid) && !jid.endsWith("@g.us")
+      })
+      .map(entrada => normalizarNumeroWhatsApp(entrada.valor))
+  )
+  const normalizedNumbers = valoresUnicos(
+    candidateNumbers.flatMap(gerarVariantesNumeroBrasil)
+  )
+
+  return {
+    isGroup,
+    pushName: String(msg?.pushName ?? ""),
+    keyRemoteJid: String(msg?.key?.remoteJid ?? ""),
+    keyParticipant: String(msg?.key?.participant ?? ""),
+    messageRemoteJid: String(msg?.message?.remoteJid ?? msg?.remoteJid ?? ""),
+    messageParticipant: String(msg?.message?.participant ?? msg?.participant ?? ""),
+    msgParticipant: String(msg?.participant ?? ""),
+    msgSender: String(msg?.sender ?? ""),
+    remoteJid: String(remoteJid),
+    participant: String(participant),
+    from: String(remoteJid),
+    sender: String(sender),
+    candidateEntries: entradas,
+    extractedJids,
+    candidateJids,
+    candidateLids,
+    candidateWhatsAppJids,
+    candidateNumbers,
+    normalizedNumbers,
+    messageType: Object.keys(msg?.message ?? {})[0] ?? "",
+  }
+}
+
+export function debugLogBetaConfig(beta = config.beta) {
+  if (!beta?.debug) return false
+
+  console.log([
+    "[CONFIG_BETA_DEBUG]",
+    `BETA_MODE=${Boolean(beta.ativo)}`,
+    `BETA_BLOCKED_REPLY=${Boolean(beta.responderBloqueado)}`,
+    `BETA_DEBUG=${Boolean(beta.debug)}`,
+    `BETA_DEBUG_SHOW_RAW=${Boolean(beta.debugMostrarRaw)}`,
+    `allowedNumbersCount=${beta.numerosAutorizados?.length ?? 0}`,
+    `allowedJidsCount=${beta.jidsAutorizados?.length ?? 0}`,
+    `allowedGroupsCount=${beta.gruposAutorizados?.length ?? 0}`,
+  ].join("\n"))
+  return true
+}
+
+/**
+ * Debug efêmero e exclusivo do terminal. Nunca usa o logger persistente.
+ */
+export function debugLogIncomingIdentifiers(
+  msg,
+  authResult,
+  beta = config.beta,
+  {
+    identifiers = extractMessageIdentifiers(msg),
+    action = "",
+    groupAllowed = false,
+    participantAuthorized = false,
+  } = {}
+) {
+  if (!beta?.debug || !beta?.debugMostrarRaw) return false
+
+  const dados = {
+    timestamp: new Date().toISOString(),
+    isGroup: identifiers.isGroup,
+    pushName: identifiers.pushName,
+    "key.remoteJid": identifiers.keyRemoteJid || null,
+    "key.participant": identifiers.keyParticipant || null,
+    "msg.participant": identifiers.msgParticipant || null,
+    "msg.sender": identifiers.msgSender || null,
+    "message.remoteJid": identifiers.messageRemoteJid || null,
+    "message.participant": identifiers.messageParticipant || null,
+    remoteJid: identifiers.remoteJid || null,
+    participant: identifiers.participant || null,
+    from: identifiers.from || null,
+    sender: identifiers.sender || null,
+    extractedJids: identifiers.extractedJids,
+    candidateJids: identifiers.candidateJids,
+    candidateLids: identifiers.candidateLids,
+    candidateWhatsAppJids: identifiers.candidateWhatsAppJids,
+    candidateNumbers: identifiers.candidateNumbers,
+    normalizedNumbers: authResult.normalizedNumbers,
+    allowedNumbers: authResult.numerosAutorizados,
+    allowedJids: authResult.jidsAutorizados,
+    matchedNumbers: authResult.numerosCorrespondentes,
+    matchedJids: authResult.jidsCorrespondentes,
+    allowedNumbersMatched: authResult.numeroAutorizado,
+    allowedJidsMatched: authResult.jidAutorizado,
+    groupAllowed,
+    participantAuthorized,
+    authorized: authResult.autorizado,
+    action,
+    messageType: identifiers.messageType,
+  }
+  const lids = identifiers.candidateLids
+    .map(lid => `LID_CANDIDATE=${lid}`)
+
+  console.log([
+    "[DEBUG_BETA_RAW_IDENTIFIERS]",
+    JSON.stringify(dados, null, 2),
+    ...lids,
+  ].join("\n"))
+  return true
+}
+
+export function extrairIdentificadorRemetente(
+  msg,
+  identifiers = extractMessageIdentifiers(msg)
+) {
+  const candidatos = identifiers.isGroup
+    ? identifiers.candidateEntries.filter(entrada =>
+        entrada.origem !== "key.remoteJid" &&
+        entrada.origem !== "msg.remoteJid" &&
+        entrada.origem !== "message.remoteJid"
+      )
+    : identifiers.candidateEntries
 
   const comTelefoneNaoLid = candidatos.find(c =>
     normalizarNumeroWhatsApp(c.valor).length >= 10 && !isJidLid(c.valor)
@@ -136,9 +279,9 @@ export function extrairIdentificadorRemetente(msg) {
     return { origem: "", identificador: "", numero: "", jid: "", variantes: [] }
   }
 
-  const numero = normalizarNumeroWhatsApp(escolhido.valor)
   const jid = normalizarJidBeta(escolhido.valor)
-  const variantes = gerarVariantesNumeroBrasil(escolhido.valor)
+  const numero = isJidLid(jid) ? "" : normalizarNumeroWhatsApp(escolhido.valor)
+  const variantes = numero ? gerarVariantesNumeroBrasil(numero) : []
 
   return {
     origem: escolhido.origem,
@@ -159,6 +302,7 @@ export async function iniciarBot() {
   if (reconectando) return
   reconectando = true
   atualizarStatusBot("conectando")
+  debugLogBetaConfig()
 
   const { state, saveCreds } = await useMultiFileAuthState(config.authPath)
   const { version }          = await fetchLatestBaileysVersion()
@@ -263,18 +407,46 @@ export async function iniciarBot() {
     const msgTs = (msg.messageTimestamp ?? 0) * 1000
     if (Date.now() - msgTs > 30_000) return
 
-    const remetente = extrairIdentificadorRemetente(msg)
+    const identifiers = extractMessageIdentifiers(msg)
+    const remetente = extrairIdentificadorRemetente(msg, identifiers)
     const usuarioId = remetente.identificador
+    const grupo = identifiers.isGroup
+    const grupoAutorizado = grupoAutorizadoBeta(from)
+    const authResult = avaliarAutorizacaoBetaCandidatos({
+      candidateJids: identifiers.candidateJids,
+      normalizedNumbers: identifiers.normalizedNumbers,
+    })
+    const autorizado = authResult.autorizado
+    const exigeParticipante = Boolean(config.beta?.exigirParticipanteAutorizado)
+    const participanteAutorizado = grupo
+      ? (!exigeParticipante || autorizado)
+      : autorizado
+    const acaoDebug = !usuarioId
+      ? "ignored_missing_identifier"
+      : grupo && !grupoAutorizado
+        ? "ignored_group_not_allowed"
+        : grupo && !participanteAutorizado
+          ? "ignored_unauthorized_participant"
+          : !autorizado && (!grupo || exigeParticipante)
+            ? (config.beta?.responderBloqueado
+                ? "blocked_with_reply"
+                : "ignored_beta_silent")
+            : "processed"
+
+    debugLogIncomingIdentifiers(msg, authResult, config.beta, {
+      identifiers,
+      action: acaoDebug,
+      groupAllowed: grupoAutorizado,
+      participantAuthorized: participanteAutorizado,
+    })
+
     if (!usuarioId) return
 
     const messageId = msg.key.id
-
     const mensagem = normalizarMensagemRecebida(msg.message).trim()
     if (!mensagem) return
 
     try {
-      const grupo = isJidGrupo(from)
-      const grupoAutorizado = grupoAutorizadoBeta(from)
       if (grupo && !grupoAutorizado) {
         registrarMensagemIgnorada("grupo", { grupo: from })
         logBetaDebug({
@@ -289,12 +461,6 @@ export async function iniciarBot() {
         })
         return
       }
-
-      const autorizado = usuarioAutorizadoBeta(usuarioId)
-      const exigeParticipante = Boolean(config.beta?.exigirParticipanteAutorizado)
-      const participanteAutorizado = grupo
-        ? (!exigeParticipante || autorizado)
-        : autorizado
 
       if (grupo && !participanteAutorizado) {
         registrarMensagemIgnorada("beta", { grupo: from, participante })
@@ -350,7 +516,7 @@ export async function iniciarBot() {
         numeroNormalizado: remetente.numero,
         variantes: remetente.variantes,
         autorizado,
-        via: remetente.jid && config.beta?.jidsAutorizados?.includes(remetente.jid) ? "jid" : "numero",
+        via: authResult.jidAutorizado ? "jid" : "numero",
         acao: "processado",
       })
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  avaliarAutorizacaoBetaCandidatos,
   carregarConfig,
   gerarVariantesNumeroBrasil,
   grupoAutorizadoBeta,
@@ -49,6 +50,57 @@ describe("config - beta fechado", () => {
     expect(config.beta.ativo).toBe(false)
     expect(config.beta.responderBloqueado).toBe(false)
     expect(usuarioAutorizadoBeta("5511999999999", config.beta)).toBe(true)
+  })
+
+  it("mantém interpretador de IA desligado por padrão", () => {
+    const config = carregarConfig({})
+
+    expect(config.ai).toEqual({
+      enabled: false,
+      provider: "openai",
+      model: "",
+      apiKey: "",
+      geminiApiKey: "",
+      geminiModel: "gemini-2.5-flash",
+      geminiMaxOutputTokens: 1200,
+      minConfidence: 0.85,
+      confirmationConfidence: 0.60,
+      timeoutMs: 8_000,
+      logEnabled: false,
+      logRaw: false,
+    })
+  })
+
+  it("carrega configuração do interpretador sem exigir chave", () => {
+    const config = carregarConfig({
+      AI_INTERPRETER_ENABLED: "true",
+      AI_PROVIDER: "OPENAI",
+      AI_MODEL: "modelo-controlado",
+      AI_API_KEY: "",
+      GEMINI_API_KEY: "gemini-chave-teste",
+      GEMINI_MODEL: "gemini-modelo-teste",
+      GEMINI_MAX_OUTPUT_TOKENS: "2048",
+      AI_MIN_CONFIDENCE: "0.90",
+      AI_CONFIRMATION_CONFIDENCE: "0.65",
+      AI_TIMEOUT_MS: "5000",
+      AI_LOG_ENABLED: "true",
+      AI_LOG_RAW: "false",
+    })
+
+    expect(config.ai).toMatchObject({
+      enabled: true,
+      provider: "openai",
+      model: "modelo-controlado",
+      apiKey: "",
+      geminiApiKey: "gemini-chave-teste",
+      geminiModel: "gemini-modelo-teste",
+      geminiMaxOutputTokens: 2048,
+      minConfidence: 0.90,
+      confirmationConfidence: 0.65,
+      timeoutMs: 5_000,
+      logEnabled: true,
+      logRaw: false,
+    })
   })
 
   it("mantém resposta para bloqueados desligada por padrão seguro", () => {
@@ -197,6 +249,32 @@ describe("config - beta fechado", () => {
 
     expect(usuarioAutorizadoBeta("contato-ficticio@lid", config.beta)).toBe(true)
     expect(usuarioAutorizadoBeta("outro-contato@lid", config.beta)).toBe(false)
+  })
+
+  it("detalha a autorização usando os mesmos candidatos do debug", () => {
+    const config = carregarConfig({
+      BETA_MODE: "true",
+      BETA_ALLOWED_NUMBERS: "5515999999999",
+      BETA_ALLOWED_JIDS: "contato-ficticio@lid",
+    })
+
+    const resultado = avaliarAutorizacaoBetaCandidatos({
+      candidateJids: [
+        "120363000000000000@g.us",
+        "contato-ficticio@lid",
+      ],
+      normalizedNumbers: ["5515888888888"],
+    }, config.beta)
+
+    expect(resultado).toMatchObject({
+      autorizado: true,
+      numeroAutorizado: false,
+      jidAutorizado: true,
+      jidsCorrespondentes: ["contato-ficticio@lid"],
+    })
+    expect(resultado.candidateJids)
+      .not.toContain("120363000000000000@g.us")
+    expect(resultado.numerosAutorizados).toContain("5515999999999")
   })
 
   it("lê grupos autorizados e exige participante autorizado por padrão", () => {

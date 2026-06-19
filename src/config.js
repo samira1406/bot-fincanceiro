@@ -24,6 +24,12 @@ function boolEnv(env, key, fallback = false) {
   return ["true", "1", "sim", "yes"].includes(val.trim().toLowerCase())
 }
 
+function numberEnv(env, key, fallback, { min = -Infinity, max = Infinity } = {}) {
+  const numero = Number(env[key] ?? fallback)
+  if (!Number.isFinite(numero)) return fallback
+  return Math.min(max, Math.max(min, numero))
+}
+
 function firstEnv(env, keys, fallback) {
   for (const key of keys) {
     const val = env[key]
@@ -172,6 +178,32 @@ export function carregarConfig(env = process.env) {
       exigirParticipanteAutorizado: boolEnv(env, "BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT", true),
     },
 
+    // IA opcional: apenas interpretação estruturada
+    ai: {
+      enabled: boolEnv(env, "AI_INTERPRETER_ENABLED", false),
+      provider: String(env.AI_PROVIDER ?? "openai").trim().toLowerCase(),
+      model: String(env.AI_MODEL ?? "").trim(),
+      apiKey: String(env.AI_API_KEY ?? "").trim(),
+      geminiApiKey: String(env.GEMINI_API_KEY ?? "").trim(),
+      geminiModel: String(env.GEMINI_MODEL ?? "gemini-2.5-flash").trim(),
+      geminiMaxOutputTokens: numberEnv(
+        env,
+        "GEMINI_MAX_OUTPUT_TOKENS",
+        1200,
+        { min: 256, max: 8192 }
+      ),
+      minConfidence: numberEnv(env, "AI_MIN_CONFIDENCE", 0.85, { min: 0, max: 1 }),
+      confirmationConfidence: numberEnv(
+        env,
+        "AI_CONFIRMATION_CONFIDENCE",
+        0.60,
+        { min: 0, max: 1 }
+      ),
+      timeoutMs: numberEnv(env, "AI_TIMEOUT_MS", 8_000, { min: 100, max: 30_000 }),
+      logEnabled: boolEnv(env, "AI_LOG_ENABLED", false),
+      logRaw: boolEnv(env, "AI_LOG_RAW", false),
+    },
+
     // Painel web
     painel: {
       porta: Number(firstEnv(env, ["PAINEL_PORTA", "PORT"], "3000")),
@@ -215,24 +247,62 @@ export function grupoAutorizadoBeta(groupJid, beta = config.beta) {
 }
 
 export function usuarioAutorizadoBeta(usuarioId, beta = config.beta) {
-  if (!beta?.ativo) return true
-
   const jidUsuario = normalizarJidBeta(usuarioId)
-  const variantesUsuario = isJidLid(jidUsuario)
+  const numerosCandidatos = isJidLid(jidUsuario)
     ? []
     : gerarVariantesNumeroBrasil(usuarioId)
-  if (!variantesUsuario.length && !jidUsuario) return false
 
-  const autorizados = new Set(
-    (beta.numerosAutorizados ?? [])
+  return avaliarAutorizacaoBetaCandidatos({
+    candidateJids: jidUsuario ? [jidUsuario] : [],
+    normalizedNumbers: numerosCandidatos,
+  }, beta).autorizado
+}
+
+/**
+ * Compara os candidatos extraídos da mensagem com a whitelist do beta.
+ * O retorno detalhado é usado tanto pela decisão quanto pelo debug local.
+ */
+export function avaliarAutorizacaoBetaCandidatos(
+  { candidateJids = [], normalizedNumbers = [] } = {},
+  beta = config.beta
+) {
+  const jidsCandidatos = [...new Set(
+    candidateJids
+      .map(normalizarJidBeta)
+      .filter(jid => jid && !jid.endsWith("@g.us"))
+  )]
+  const numerosCandidatos = [...new Set(
+    normalizedNumbers.flatMap(gerarVariantesNumeroBrasil)
+  )]
+
+  const numerosAutorizados = [...new Set(
+    (beta?.numerosAutorizados ?? [])
       .flatMap(gerarVariantesNumeroBrasil)
-  )
-  const jidsAutorizados = new Set(
-    (beta.jidsAutorizados ?? [])
+  )]
+  const jidsAutorizados = [...new Set(
+    (beta?.jidsAutorizados ?? [])
       .map(normalizarJidBeta)
       .filter(Boolean)
-  )
+  )]
 
-  return variantesUsuario.some(variante => autorizados.has(variante)) ||
-    (jidUsuario && jidsAutorizados.has(jidUsuario))
+  const conjuntoNumeros = new Set(numerosAutorizados)
+  const conjuntoJids = new Set(jidsAutorizados)
+  const numerosCorrespondentes = numerosCandidatos
+    .filter(numero => conjuntoNumeros.has(numero))
+  const jidsCorrespondentes = jidsCandidatos
+    .filter(jid => conjuntoJids.has(jid))
+  const numeroAutorizado = numerosCorrespondentes.length > 0
+  const jidAutorizado = jidsCorrespondentes.length > 0
+
+  return {
+    autorizado: !beta?.ativo || numeroAutorizado || jidAutorizado,
+    numeroAutorizado,
+    jidAutorizado,
+    candidateJids: jidsCandidatos,
+    normalizedNumbers: numerosCandidatos,
+    numerosAutorizados,
+    jidsAutorizados,
+    numerosCorrespondentes,
+    jidsCorrespondentes,
+  }
 }

@@ -44,6 +44,9 @@ import {
   fmtAvaliacaoBetaMotivo, fmtAvaliacaoBetaNota,
   fmtBugRegistrado, fmtBugSemTexto, fmtChecklistBeta,
   fmtFeedbackRegistrado, fmtFeedbackSemTexto, fmtTutorialBeta,
+  fmtAICancelada, fmtAIConfirmacao, fmtAIColetarCategoria,
+  fmtAIColetarValor, fmtAIEsclarecimento, fmtAIReformular,
+  fmtAIRespostaConfirmacaoInvalida,
 } from "./formatters.js"
 import {
   classificarMensagemDesconhecida,
@@ -80,6 +83,7 @@ import {
   obterAvaliacaoBetaPendente, selecionarNotaAvaliacaoBeta,
 } from "./pendingBeta.js"
 import {
+  criarConsultaFinanceiraEstruturada,
   executarConsultaFinanceira,
   formatarRespostaConsulta,
   parseConsultaFinanceira,
@@ -88,6 +92,13 @@ import {
   formatarFechamentoMensal,
   gerarFechamentoMensal,
 } from "./insights.js"
+import { interpretarMensagemComIA } from "./aiInterpreter.js"
+import {
+  atualizarPendenciaAI,
+  iniciarPendenciaAI,
+  limparPendenciaAI,
+  obterPendenciaAI,
+} from "./pendingAI.js"
 
 // ── Envio seguro ──────────────────────────────────────────────────────────────
 
@@ -1012,6 +1023,7 @@ async function processarAvaliacaoBetaPendente(
 }
 
 async function handleCancelarTudo(sock, from, usuarioId) {
+  limparPendenciaAI(usuarioId)
   limparAvaliacaoBetaPendente(usuarioId)
   limparPendenciasAcoesUsuario(usuarioId)
   limparPendenciaLancamento(from, usuarioId)
@@ -1124,9 +1136,17 @@ async function registrarLancamentoComConfirmacao(
   from,
   usuarioId,
   nomeUsuario,
-  { tipo, nome, categoria, valor }
+  { tipo, nome, categoria, valor, criadoEm }
 ) {
-  inserirLancamento({ usuarioId, tipo, nome, categoria, valor, mes: mesAtual() })
+  inserirLancamento({
+    usuarioId,
+    tipo,
+    nome,
+    categoria,
+    valor,
+    mes: criadoEm ? undefined : mesAtual(),
+    criadoEm,
+  })
 
   if (tipo === "entrada") {
     await enviar(sock, from, fmtConfirmacaoReceita({ valor, categoria }))
@@ -1147,6 +1167,258 @@ async function registrarLancamentoComConfirmacao(
   await verificarMeta(sock, from, usuarioId, nomeUsuario, valor)
 }
 
+function criadoEmPorReferenciaAI(referencia, agora = new Date()) {
+  if (!referencia || referencia === "hoje") return undefined
+  if (!["ontem", "anteontem"].includes(referencia)) return null
+
+  const data = new Date(agora)
+  data.setDate(data.getDate() - (referencia === "ontem" ? 1 : 2))
+  return data.getTime()
+}
+
+async function executarInterpretacaoAI(
+  sock,
+  from,
+  usuarioId,
+  nome,
+  interpretacao
+) {
+  if (interpretacao.intent === "registrar_despesa" ||
+      interpretacao.intent === "registrar_receita") {
+    const tipoMovimento = interpretacao.intent === "registrar_receita"
+      ? "entrada"
+      : "gasto"
+    const dadosCategoria = parseCategoriaLancamentoPendente(
+      interpretacao.transaction.category ??
+      interpretacao.transaction.description ??
+      "",
+      tipoMovimento
+    )
+    const criadoEm = criadoEmPorReferenciaAI(
+      interpretacao.transaction.date_reference
+    )
+    if (!dadosCategoria ||
+        !Number.isFinite(interpretacao.transaction.amount) ||
+        criadoEm === null) {
+      return false
+    }
+
+    await registrarLancamentoComConfirmacao(sock, from, usuarioId, nome, {
+      tipo: tipoMovimento,
+      valor: interpretacao.transaction.amount,
+      ...dadosCategoria,
+      criadoEm,
+    })
+    registrarEvento("ai_interpretacao_executada", {
+      intent: interpretacao.intent,
+      confidence: interpretacao.confidence,
+    })
+    return true
+  }
+
+  if (interpretacao.intent === "consultar_gastos" ||
+      interpretacao.intent === "consultar_receitas" ||
+      interpretacao.intent === "consultar_saldo") {
+    const consulta = criarConsultaFinanceiraEstruturada({
+      intent: interpretacao.intent,
+      metric: interpretacao.query.metric,
+      category: interpretacao.query.category,
+      period: interpretacao.query.period,
+    })
+    if (!consulta) return false
+    await handleConsultaFinanceira(sock, from, usuarioId, consulta)
+    return true
+  }
+
+  if (interpretacao.intent === "fechamento") {
+    await handleFechamentoMensal(sock, from, usuarioId)
+    return true
+  }
+
+  if (interpretacao.intent === "gerar_planilha") {
+    await handleExportarXlsx(sock, from, usuarioId, nome)
+    return true
+  }
+
+  if (interpretacao.intent === "ajuda") {
+    await handleComandos(sock, from)
+    return true
+  }
+
+  if (interpretacao.intent === "corrigir_lancamento") {
+    await handleAcaoLancamento(sock, from, usuarioId, {
+      tipo: "editar_lista",
+    })
+    return true
+  }
+
+  if (interpretacao.intent === "excluir_lancamento") {
+    await handleAcaoLancamento(sock, from, usuarioId, {
+      tipo: "excluir_lista",
+      indice: null,
+    })
+    return true
+  }
+
+  return false
+}
+
+async function processarInterpretacaoAI(
+  sock,
+  from,
+  usuarioId,
+  nome,
+  interpretacao
+) {
+  if (interpretacao.action === "reformular") {
+    await enviar(sock, from, fmtAIReformular())
+    return true
+  }
+
+  if (interpretacao.action === "esclarecer") {
+    await enviar(sock, from, fmtAIEsclarecimento(interpretacao))
+    return true
+  }
+
+  if (interpretacao.action === "coletar_valor") {
+    iniciarPendenciaAI(usuarioId, "valor", interpretacao)
+    await enviar(sock, from, fmtAIColetarValor(interpretacao))
+    return true
+  }
+
+  if (interpretacao.action === "coletar_categoria") {
+    iniciarPendenciaAI(usuarioId, "categoria", interpretacao)
+    await enviar(sock, from, fmtAIColetarCategoria(interpretacao))
+    return true
+  }
+
+  if (interpretacao.action === "confirmar") {
+    iniciarPendenciaAI(usuarioId, "confirmacao", interpretacao)
+    await enviar(sock, from, fmtAIConfirmacao(interpretacao))
+    return true
+  }
+
+  if (interpretacao.action === "executar") {
+    const executada = await executarInterpretacaoAI(
+      sock,
+      from,
+      usuarioId,
+      nome,
+      interpretacao
+    )
+    if (!executada) await enviar(sock, from, fmtAIReformular())
+    return true
+  }
+
+  return false
+}
+
+async function processarPendenciaAI(
+  sock,
+  from,
+  usuarioId,
+  nome,
+  mensagem,
+  pendencia
+) {
+  if (isCancelamentoPendencia(mensagem)) {
+    limparPendenciaAI(usuarioId)
+    await enviar(sock, from, fmtAICancelada())
+    return
+  }
+
+  const resposta = String(mensagem ?? "").trim().toLowerCase()
+  if (pendencia.etapa === "confirmacao") {
+    if (["2", "nao", "não"].includes(resposta)) {
+      limparPendenciaAI(usuarioId)
+      await enviar(sock, from, fmtAICancelada())
+      return
+    }
+    if (!["1", "sim", "confirmar", "confirmo"].includes(resposta)) {
+      await enviar(sock, from, fmtAIRespostaConfirmacaoInvalida())
+      return
+    }
+
+    limparPendenciaAI(usuarioId)
+    const executada = await executarInterpretacaoAI(
+      sock,
+      from,
+      usuarioId,
+      nome,
+      pendencia.interpretacao
+    )
+    if (!executada) await enviar(sock, from, fmtAIReformular())
+    return
+  }
+
+  if (pendencia.etapa === "valor") {
+    const valor = parseValorSimples(mensagem)
+    if (!valor) {
+      await enviar(sock, from, fmtAIColetarValor(pendencia.interpretacao))
+      return
+    }
+    const interpretacao = {
+      ...pendencia.interpretacao,
+      transaction: {
+        ...pendencia.interpretacao.transaction,
+        amount: valor,
+      },
+    }
+    if (!interpretacao.transaction.category &&
+        !interpretacao.transaction.description) {
+      atualizarPendenciaAI(usuarioId, {
+        etapa: "categoria",
+        interpretacao,
+      })
+      await enviar(sock, from, fmtAIColetarCategoria(interpretacao))
+      return
+    }
+
+    limparPendenciaAI(usuarioId)
+    const executada = await executarInterpretacaoAI(
+      sock,
+      from,
+      usuarioId,
+      nome,
+      interpretacao
+    )
+    if (!executada) await enviar(sock, from, fmtAIReformular())
+    return
+  }
+
+  if (pendencia.etapa === "categoria") {
+    const tipoMovimento =
+      pendencia.interpretacao.intent === "registrar_receita"
+        ? "entrada"
+        : "gasto"
+    const categoria = parseCategoriaLancamentoPendente(
+      mensagem,
+      tipoMovimento
+    )
+    if (!categoria) {
+      await enviar(sock, from, fmtAIColetarCategoria(pendencia.interpretacao))
+      return
+    }
+    const interpretacao = {
+      ...pendencia.interpretacao,
+      transaction: {
+        ...pendencia.interpretacao.transaction,
+        category: categoria.categoria,
+        description: categoria.nome,
+      },
+    }
+    limparPendenciaAI(usuarioId)
+    const executada = await executarInterpretacaoAI(
+      sock,
+      from,
+      usuarioId,
+      nome,
+      interpretacao
+    )
+    if (!executada) await enviar(sock, from, fmtAIReformular())
+  }
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
@@ -1155,7 +1427,7 @@ async function registrarLancamentoComConfirmacao(
  * @param {string} from
  * @param {string} usuarioId
  * @param {string} mensagem
- * @param {{ pularBeta?: boolean }} [opcoes]
+ * @param {{ pularBeta?: boolean, aiInterpreter?:Function }} [opcoes]
  */
 export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes = {}) {
   if (!opcoes.pularBeta && !usuarioAutorizadoBeta(usuarioId)) {
@@ -1270,6 +1542,19 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
     return
   }
 
+  const pendenciaAI = obterPendenciaAI(usuarioId)
+  if (pendenciaAI) {
+    await processarPendenciaAI(
+      sock,
+      from,
+      usuarioId,
+      nome,
+      mensagem,
+      pendenciaAI
+    )
+    return
+  }
+
   const avaliacaoPendente = obterAvaliacaoBetaPendente(usuarioId)
   if (avaliacaoPendente) {
     await processarAvaliacaoBetaPendente(
@@ -1373,7 +1658,10 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
         return
       }
 
-      const categoriaPendente = parseCategoriaLancamentoPendente(mensagem)
+      const categoriaPendente = parseCategoriaLancamentoPendente(
+        mensagem,
+        pendencia.tipo
+      )
       if (!categoriaPendente) {
         registrarFallbackAcionado("pendencia_incompleta")
         await enviar(sock, from, formatarMensagemNaoEntendida({
@@ -1519,6 +1807,23 @@ export async function processarMensagem(sock, from, usuarioId, mensagem, opcoes 
   const lancamento = parseLancamento(mensagem)
   if (!lancamento) {
     const classificacao = classificarMensagemDesconhecida(mensagem)
+
+    if (classificacao.motivo === "desconhecido_total" &&
+        config.ai?.enabled) {
+      const interpretar = opcoes.aiInterpreter ?? interpretarMensagemComIA
+      const interpretacao = await interpretar(mensagem, null)
+      if (interpretacao) {
+        const processada = await processarInterpretacaoAI(
+          sock,
+          from,
+          usuarioId,
+          nome,
+          interpretacao
+        )
+        if (processada) return
+      }
+    }
+
     registrarFallbackAcionado(classificacao.motivo)
     await enviar(sock, from, fmtMensagemNaoEntendida({
       ...classificacao,

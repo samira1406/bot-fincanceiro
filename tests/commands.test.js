@@ -16,6 +16,19 @@ const configMock = vi.hoisted(() => {
       whatsappInteractiveEnabled: false,
       whatsappMenuMode:    "text",
       beta:                { ativo: false, responderBloqueado: false, numerosAutorizados: [] },
+      ai:                  {
+        enabled: false,
+        provider: "openai",
+        model: "",
+        apiKey: "",
+        geminiApiKey: "",
+        geminiModel: "gemini-2.5-flash",
+        minConfidence: 0.85,
+        confirmationConfidence: 0.60,
+        timeoutMs: 8_000,
+        logEnabled: false,
+        logRaw: false,
+      },
     },
     normalizarNumeroBeta,
     mascararNumeroBeta: (valor) => {
@@ -76,9 +89,14 @@ const {
   resetPendenciasBetaParaTestes,
 } = await import("../src/pendingBeta.js")
 const {
+  obterPendenciaAI,
+  resetPendenciasAIParaTestes,
+} = await import("../src/pendingAI.js")
+const {
   obterRuntimeState,
   resetRuntimeStateParaTestes,
 } = await import("../src/runtimeState.js")
+const { validarInterpretacaoAI } = await import("../src/aiValidation.js")
 
 let sock
 
@@ -100,10 +118,53 @@ function periodoAtualTeste() {
   return { mes: d.getMonth() + 1, ano: d.getFullYear() }
 }
 
+function interpretacaoAI({
+  intent = "registrar_despesa",
+  confidence = 0.91,
+  action = "executar",
+  amount = 35,
+  category = "Mercado",
+  description = "mercado",
+  dateReference = "hoje",
+  metric = null,
+  queryCategory = null,
+  period = null,
+} = {}) {
+  const registro = intent === "registrar_despesa" ||
+    intent === "registrar_receita"
+  return {
+    intent,
+    confidence,
+    needs_confirmation: action === "confirmar",
+    reason: "Interpretação estruturada de teste.",
+    action,
+    transaction: registro
+      ? {
+          type: intent === "registrar_receita" ? "receita" : "despesa",
+          amount,
+          category,
+          description,
+          date_reference: dateReference,
+        }
+      : {
+          type: null,
+          amount: null,
+          category: null,
+          description: null,
+          date_reference: null,
+        },
+    query: registro
+      ? { metric: null, category: null, period: null }
+      : { metric, category: queryCategory, period },
+    clarification: { question: null, options: [] },
+  }
+}
+
 beforeEach(() => {
   resetPendenciasLancamentoParaTestes()
   resetPendenciasEdicaoParaTestes()
   resetPendenciasBetaParaTestes()
+  resetPendenciasAIParaTestes()
   resetMenusPendentesParaTestes()
   resetRuntimeStateParaTestes()
   db.exec(`
@@ -116,6 +177,397 @@ beforeEach(() => {
   configMock.config.whatsappInteractiveEnabled = false
   configMock.config.whatsappMenuMode = "text"
   configMock.config.beta = { ativo: false, responderBloqueado: false, numerosAutorizados: [] }
+  configMock.config.ai = {
+    enabled: false,
+    provider: "openai",
+    model: "",
+    apiKey: "",
+    geminiApiKey: "",
+    geminiModel: "gemini-2.5-flash",
+    minConfidence: 0.85,
+    confirmationConfidence: 0.60,
+    timeoutMs: 8_000,
+    logEnabled: false,
+    logRaw: false,
+  }
+})
+
+describe("processarMensagem - IA interpretadora segura", () => {
+  it("mantém o comportamento antigo e não chama IA quando está desligada", async () => {
+    prepararUsuario("user-ai-off")
+    const aiInterpreter = vi.fn()
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-off",
+      "gstei 35 no mercd",
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).not.toHaveBeenCalled()
+    expect(ultimaResposta()).toContain("ainda não entendi direitinho")
+    expect(getUltimoLancamento("user-ai-off")).toBeNull()
+  })
+
+  it("não autorizado não chama IA, não recebe resposta e não cria cadastro", async () => {
+    configMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      numerosAutorizados: ["5515999999999"],
+    }
+    configMock.config.ai = {
+      ...configMock.config.ai,
+      enabled: true,
+      provider: "gemini",
+      geminiApiKey: "gemini-chave-teste",
+      geminiModel: "gemini-2.5-flash",
+    }
+    const aiInterpreter = vi.fn(async () => interpretacaoAI())
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "5515888888888",
+      "gstei 35 no mercd",
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).not.toHaveBeenCalled()
+    expect(sock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("5515888888888")).toBeNull()
+    expect(getUltimoLancamento("5515888888888")).toBeNull()
+  })
+
+  it("parser local mercado 35 tem prioridade e não chama IA", async () => {
+    prepararUsuario("user-ai-local")
+    configMock.config.ai = {
+      ...configMock.config.ai,
+      enabled: true,
+      provider: "gemini",
+      geminiApiKey: "gemini-chave-teste",
+      geminiModel: "gemini-2.5-flash",
+    }
+    const aiInterpreter = vi.fn(async () => interpretacaoAI())
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-local",
+      "mercado 35",
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).not.toHaveBeenCalled()
+    expect(getUltimoLancamento("user-ai-local")).toMatchObject({
+      tipo: "gasto",
+      valor: 35,
+      categoria: "mercado",
+    })
+  })
+
+  it("fallback local mercado pede valor sem chamar IA", async () => {
+    prepararUsuario("user-ai-mercado")
+    configMock.config.ai.enabled = true
+    const aiInterpreter = vi.fn()
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-mercado",
+      "mercado",
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).not.toHaveBeenCalled()
+    expect(ultimaResposta()).toContain("faltou o valor")
+    expect(getUltimoLancamento("user-ai-mercado")).toBeNull()
+  })
+
+  it.each([
+    [
+      "gstei 35 no mercd",
+      interpretacaoAI({
+        intent: "registrar_despesa",
+        category: "Mercd",
+        description: "mercd",
+      }),
+      "gasto",
+      "mercado",
+      "Mercado",
+    ],
+    [
+      "receebi 1250 de frila",
+      interpretacaoAI({
+        intent: "registrar_receita",
+        amount: 1250,
+        category: "Frila",
+        description: "frila",
+      }),
+      "entrada",
+      "freelance",
+      "Freelance",
+    ],
+  ])("executa interpretação de alta confiança para %s", async (
+    mensagem,
+    interpretacao,
+    tipo,
+    categoria,
+    categoriaExibida
+  ) => {
+    prepararUsuario("user-ai-registro")
+    configMock.config.ai.enabled = true
+    const aiInterpreter = vi.fn(async () => interpretacao)
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-registro",
+      mensagem,
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).toHaveBeenCalledOnce()
+    expect(getUltimoLancamento("user-ai-registro")).toMatchObject({
+      tipo,
+      valor: interpretacao.transaction.amount,
+      categoria,
+    })
+    expect(ultimaResposta()).toContain(categoriaExibida)
+    expect(ultimaResposta()).not.toContain(interpretacao.transaction.category)
+  })
+
+  it("preserva referência ontem em lançamento interpretado", async () => {
+    prepararUsuario("user-ai-ontem")
+    configMock.config.ai.enabled = true
+    const { action: _actionOntem, ...respostaBruta } = interpretacaoAI({
+      amount: 47,
+      category: "Ifodi",
+      description: "ifodi",
+      dateReference: "ontem",
+    })
+    const validacao = validarInterpretacaoAI(respostaBruta, {
+      mensagemOriginal: "gastei uns 47 conto no ifodi ontem",
+    })
+    expect(validacao, JSON.stringify(validacao)).toMatchObject({ ok: true })
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-ontem",
+      "gastei uns 47 conto no ifodi ontem",
+      {
+        aiInterpreter: vi.fn(async () => validacao.valor),
+      }
+    )
+
+    expect(getUltimoLancamento("user-ai-ontem")).toBeNull()
+    expect(ultimaResposta()).toContain("Ifood")
+    expect(ultimaResposta()).not.toContain("Ifodi")
+
+    await processarMensagem(sock, "grupo", "user-ai-ontem", "1")
+
+    const lancamento = getUltimoLancamento("user-ai-ontem")
+    const ontem = new Date()
+    ontem.setDate(ontem.getDate() - 1)
+    expect(lancamento.categoria).toBe("ifood")
+    expect(new Date(lancamento.criado_em).toLocaleDateString("pt-BR"))
+      .toBe(ontem.toLocaleDateString("pt-BR"))
+  })
+
+  it("converte consulta interpretada para as funções financeiras existentes", async () => {
+    prepararUsuario("user-ai-consulta")
+    inserirLancamento({
+      usuarioId: "user-ai-consulta",
+      tipo: "gasto",
+      nome: "ifood",
+      categoria: "ifood",
+      valor: 47,
+      mes: mesAtual(),
+    })
+    configMock.config.ai.enabled = true
+    const { action: _actionConsulta, ...respostaBruta } = interpretacaoAI({
+      intent: "consulta_despesas",
+      metric: "despesas",
+      queryCategory: "ifod",
+      period: "esse_mes",
+    })
+    const validacao = validarInterpretacaoAI(respostaBruta, {
+      mensagemOriginal: "qnt foi ifod esse mes",
+    })
+    expect(validacao, JSON.stringify(validacao)).toMatchObject({ ok: true })
+    const aiInterpreter = vi.fn(async () => validacao.valor)
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-consulta",
+      "qnt foi ifod esse mes",
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).toHaveBeenCalledOnce()
+    expect(ultimaResposta()).toContain("Você gastou R$ 47,00")
+  })
+
+  it("confiança média exige confirmação antes de registrar", async () => {
+    prepararUsuario("user-ai-confirmacao")
+    configMock.config.ai.enabled = true
+    const aiInterpreter = vi.fn(async () => interpretacaoAI({
+      confidence: 0.72,
+      action: "confirmar",
+    }))
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-confirmacao",
+      "gstei uns 35 no mercd",
+      { aiInterpreter }
+    )
+
+    expect(getUltimoLancamento("user-ai-confirmacao")).toBeNull()
+    expect(obterPendenciaAI("user-ai-confirmacao")).toMatchObject({
+      etapa: "confirmacao",
+    })
+    expect(ultimaResposta()).toContain("Confirmar?")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-confirmacao",
+      "1250"
+    )
+
+    expect(getUltimoLancamento("user-ai-confirmacao")).toBeNull()
+    expect(obterPendenciaAI("user-ai-confirmacao")).toMatchObject({
+      etapa: "confirmacao",
+    })
+    expect(ultimaResposta()).toContain("confirmação pendente")
+    expect(ultimaResposta()).toContain("1 - Confirmar")
+    expect(ultimaResposta()).toContain("2 - Cancelar")
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-confirmacao",
+      "1"
+    )
+
+    expect(getUltimoLancamento("user-ai-confirmacao")).toMatchObject({
+      tipo: "gasto",
+      valor: 35,
+    })
+    expect(obterPendenciaAI("user-ai-confirmacao")).toBeNull()
+  })
+
+  it("resposta 2 cancela confirmação sem registrar", async () => {
+    prepararUsuario("user-ai-cancelar")
+    configMock.config.ai.enabled = true
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-cancelar",
+      "gstei uns 35 no mercd",
+      {
+        aiInterpreter: vi.fn(async () => interpretacaoAI({
+          confidence: 0.72,
+          action: "confirmar",
+        })),
+      }
+    )
+    await processarMensagem(sock, "grupo", "user-ai-cancelar", "2")
+
+    expect(getUltimoLancamento("user-ai-cancelar")).toBeNull()
+    expect(ultimaResposta()).toContain("Nenhum dado foi alterado")
+  })
+
+  it("confiança baixa pede reformulação e não registra", async () => {
+    prepararUsuario("user-ai-baixa")
+    configMock.config.ai.enabled = true
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-baixa",
+      "banana azul",
+      {
+        aiInterpreter: vi.fn(async () => interpretacaoAI({
+          intent: "desconhecido",
+          confidence: 0.30,
+          action: "reformular",
+          amount: null,
+          category: null,
+          description: null,
+        })),
+      }
+    )
+
+    expect(ultimaResposta()).toContain("Não consegui entender com segurança")
+    expect(getUltimoLancamento("user-ai-baixa")).toBeNull()
+  })
+
+  it("coleta valor ausente antes de registrar", async () => {
+    prepararUsuario("user-ai-valor")
+    configMock.config.ai.enabled = true
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-valor",
+      "gstei no mercd",
+      {
+        aiInterpreter: vi.fn(async () => interpretacaoAI({
+          action: "coletar_valor",
+          amount: null,
+        })),
+      }
+    )
+    expect(obterPendenciaAI("user-ai-valor")).toMatchObject({ etapa: "valor" })
+
+    await processarMensagem(sock, "grupo", "user-ai-valor", "35")
+
+    expect(getUltimoLancamento("user-ai-valor")).toMatchObject({
+      tipo: "gasto",
+      valor: 35,
+    })
+  })
+
+  it("valor sozinho preserva o pending local e não chama IA", async () => {
+    prepararUsuario("user-ai-1250")
+    configMock.config.ai.enabled = true
+    const aiInterpreter = vi.fn()
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-1250",
+      "1250",
+      { aiInterpreter }
+    )
+
+    expect(aiInterpreter).not.toHaveBeenCalled()
+    expect(obterPendenciaLancamento("grupo", "user-ai-1250"))
+      .toMatchObject({ valor: 1250, etapa: "tipo" })
+    expect(getUltimoLancamento("user-ai-1250")).toBeNull()
+  })
+
+  it("falha ou JSON inválido da IA preserva o fallback atual", async () => {
+    prepararUsuario("user-ai-falha")
+    configMock.config.ai.enabled = true
+
+    await processarMensagem(
+      sock,
+      "grupo",
+      "user-ai-falha",
+      "gstei 35 no mercd",
+      { aiInterpreter: vi.fn(async () => null) }
+    )
+
+    expect(ultimaResposta()).toContain("ainda não entendi direitinho")
+    expect(getUltimoLancamento("user-ai-falha")).toBeNull()
+  })
 })
 
 describe("processarMensagem - beta fechado", () => {
@@ -1943,7 +2395,7 @@ describe("processarMensagem - consultas financeiras inteligentes", () => {
       await processarMensagem(sock, "grupo", "user-ranking", mensagem)
 
       expect(ultimaResposta()).toContain("1. Mercado: R$ 300,00")
-      expect(ultimaResposta()).toContain("2. Transporte: R$ 100,00")
+      expect(ultimaResposta()).toContain("2. Uber: R$ 100,00")
     }
   )
 

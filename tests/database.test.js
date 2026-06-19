@@ -95,6 +95,23 @@ describe("Lançamentos", () => {
     expect(id).toBeGreaterThan(0)
   })
 
+  it("inserirLancamento aceita data estruturada e calcula o mês", () => {
+    const criadoEm = new Date("2026-05-31T12:00:00-03:00").getTime()
+    inserirLancamento({
+      usuarioId: UID,
+      tipo: "gasto",
+      nome: "mercado",
+      categoria: "mercado",
+      valor: 35,
+      criadoEm,
+    })
+
+    expect(getUltimoLancamento(UID)).toMatchObject({
+      mes: "5-2026",
+      criado_em: criadoEm,
+    })
+  })
+
   it("getLancamentosPorMes retorna apenas do mês correto", () => {
     inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "a", categoria: "geral", valor: 10, mes: "6-2026" })
     inserirLancamento({ usuarioId: UID, tipo: "gasto", nome: "b", categoria: "geral", valor: 20, mes: "5-2026" })
@@ -554,7 +571,7 @@ describe("Exportação CSV", () => {
     const csv = gerarCSV(UID, "6-2026")
 
     expect(csv).toContain("Alimentação")
-    expect(csv).toContain("Saúde")
+    expect(csv).toContain("Farmácia")
   })
 
   it("CSV vazio para mês sem dados", () => {

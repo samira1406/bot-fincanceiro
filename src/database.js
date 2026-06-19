@@ -119,15 +119,44 @@ export function getTodosUsuarios() {
 
 /**
  * Insere um lançamento.
- * @param {{ usuarioId:string, tipo:"entrada"|"gasto", nome:string, categoria?:string, valor:number, mes?:string, tags?:string }} p
+ * @param {{ usuarioId:string, tipo:"entrada"|"gasto", nome:string, categoria?:string, valor:number, mes?:string, tags?:string, criadoEm?:number }} p
  * @returns {number} ID do lançamento inserido
  */
-export function inserirLancamento({ usuarioId, tipo, nome, categoria, valor, mes, tags = "" }) {
+export function inserirLancamento({
+  usuarioId,
+  tipo,
+  nome,
+  categoria,
+  valor,
+  mes,
+  tags = "",
+  criadoEm,
+}) {
   const categoriaNorm = normalizarCategoriaPorPalavraChave(categoria ?? "geral", tipo)
-  const info = db.prepare(`
-    INSERT INTO lancamentos (usuario_id, tipo, nome, categoria, valor, mes, tags)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(usuarioId, tipo, nome, categoriaNorm, valor, mes ?? mesAtual(), tags)
+  const dataLancamento = Number.isFinite(criadoEm) ? new Date(criadoEm) : null
+  const mesLancamento = mes ?? (dataLancamento
+    ? `${dataLancamento.getMonth() + 1}-${dataLancamento.getFullYear()}`
+    : mesAtual())
+  const info = dataLancamento
+    ? db.prepare(`
+        INSERT INTO lancamentos (
+          usuario_id, tipo, nome, categoria, valor, mes, tags, criado_em
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        usuarioId,
+        tipo,
+        nome,
+        categoriaNorm,
+        valor,
+        mesLancamento,
+        tags,
+        dataLancamento.getTime()
+      )
+    : db.prepare(`
+        INSERT INTO lancamentos (usuario_id, tipo, nome, categoria, valor, mes, tags)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(usuarioId, tipo, nome, categoriaNorm, valor, mesLancamento, tags)
   return info.lastInsertRowid
 }
 

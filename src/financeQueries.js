@@ -1,4 +1,7 @@
-import { normalizarCategoriaPorPalavraChave } from "./categoryRules.js"
+import {
+  normalizarCategoriaCanonica,
+  normalizarCategoriaPorPalavraChave,
+} from "./categoryRules.js"
 import {
   fmtCategoriaAmigavel,
   fmtDescricaoLancamento,
@@ -37,11 +40,74 @@ function periodoMes(data, deslocamento = 0) {
   }
 }
 
+function periodoSemana(data, deslocamento = 0) {
+  const inicio = inicioDoDia(data)
+  const dia = inicio.getDay()
+  inicio.setDate(inicio.getDate() - (dia === 0 ? 6 : dia - 1) + (deslocamento * 7))
+  const fim = new Date(inicio)
+  fim.setDate(fim.getDate() + 7)
+  return {
+    tipo: deslocamento === -1 ? "semana_passada" : "semana",
+    label: deslocamento === -1 ? "na semana passada" : "nesta semana",
+    inicio: inicio.getTime(),
+    fim: fim.getTime(),
+  }
+}
+
+export function periodoConsultaPorReferencia(referencia, agora = new Date()) {
+  if (referencia === "mes_passado") return periodoMes(agora, -1)
+  if (referencia === "semana_passada") return periodoSemana(agora, -1)
+  if (referencia === "esta_semana") return periodoSemana(agora)
+
+  if (referencia === "ultimos_7_dias") {
+    const fim = new Date(agora).getTime() + 1
+    const inicio = inicioDoDia(agora)
+    inicio.setDate(inicio.getDate() - 6)
+    return {
+      tipo: "ultimos_7_dias",
+      label: "nos últimos 7 dias",
+      inicio: inicio.getTime(),
+      fim,
+    }
+  }
+
+  if (referencia === "ontem") {
+    const inicio = inicioDoDia(agora)
+    inicio.setDate(inicio.getDate() - 1)
+    const fim = new Date(inicio)
+    fim.setDate(fim.getDate() + 1)
+    return {
+      tipo: "ontem",
+      label: "ontem",
+      inicio: inicio.getTime(),
+      fim: fim.getTime(),
+    }
+  }
+
+  if (referencia === "hoje") {
+    const inicio = inicioDoDia(agora)
+    const fim = new Date(inicio)
+    fim.setDate(fim.getDate() + 1)
+    return {
+      tipo: "hoje",
+      label: "hoje",
+      inicio: inicio.getTime(),
+      fim: fim.getTime(),
+    }
+  }
+
+  return periodoMes(agora)
+}
+
 function extrairPeriodo(texto, agora) {
   const periodos = [
     {
       padrao: /\b(?:(?:no|do)\s+)?mes passado\b/u,
       criar: () => periodoMes(agora, -1),
+    },
+    {
+      padrao: /\b(?:na\s+)?semana passada\b/u,
+      criar: () => periodoSemana(agora, -1),
     },
     {
       padrao: /\b(?:nos\s+)?ultimos 7 dias\b/u,
@@ -78,19 +144,7 @@ function extrairPeriodo(texto, agora) {
     },
     {
       padrao: /\b(?:(?:essa|esta|nesta|nessa)\s+)?semana\b/u,
-      criar: () => {
-        const inicio = inicioDoDia(agora)
-        const dia = inicio.getDay()
-        inicio.setDate(inicio.getDate() - (dia === 0 ? 6 : dia - 1))
-        const fim = new Date(inicio)
-        fim.setDate(fim.getDate() + 7)
-        return {
-          tipo: "semana",
-          label: "nesta semana",
-          inicio: inicio.getTime(),
-          fim: fim.getTime(),
-        }
-      },
+      criar: () => periodoSemana(agora),
     },
     {
       padrao: /\b(?:(?:esse|este|neste|nesse|do|no)\s+)?mes\b/u,
@@ -179,6 +233,38 @@ export function parseConsultaFinanceira(mensagem, agora = new Date()) {
   return null
 }
 
+export function criarConsultaFinanceiraEstruturada(
+  { intent, metric, category = null, period = null },
+  agora = new Date()
+) {
+  const periodo = periodoConsultaPorReferencia(period ?? "este_mes", agora)
+
+  if (intent === "consultar_saldo" && metric === "saldo") {
+    return { tipo: "saldo", periodo }
+  }
+
+  const movimento = intent === "consultar_receitas" ? "entrada" : "gasto"
+  if (metric === "maior_gasto" && movimento === "gasto") {
+    return { tipo: "maior_gasto", periodo }
+  }
+  if (metric === "top_categorias") {
+    return { tipo: "ranking_categorias", movimento, periodo }
+  }
+  if (metric === "gastos" || metric === "receitas") {
+    if (category) {
+      return {
+        tipo: "total_categoria",
+        movimento,
+        categoria: normalizarCategoriaPorPalavraChave(category, movimento),
+        periodo,
+      }
+    }
+    return { tipo: "total_movimento", movimento, periodo }
+  }
+
+  return null
+}
+
 function buscarLancamentos(db, usuarioId, periodo) {
   if (periodo.mesChave) {
     return db.prepare(`
@@ -195,13 +281,22 @@ function buscarLancamentos(db, usuarioId, periodo) {
   `).all(usuarioId, periodo.inicio, periodo.fim)
 }
 
+function categoriaCanonicaLancamento(lancamento, movimento) {
+  const porDescricao = normalizarCategoriaCanonica(
+    lancamento.nome,
+    { tipo: movimento }
+  )
+  if (porDescricao.source !== "unknown") return porDescricao.category
+  return normalizarCategoriaPorPalavraChave(
+    lancamento.categoria,
+    movimento
+  )
+}
+
 function agruparCategorias(lancamentos, movimento) {
   const totais = new Map()
   for (const lancamento of lancamentos) {
-    const categoria = normalizarCategoriaPorPalavraChave(
-      lancamento.categoria,
-      movimento
-    )
+    const categoria = categoriaCanonicaLancamento(lancamento, movimento)
     totais.set(
       categoria,
       (totais.get(categoria) ?? 0) + lancamento.valor
@@ -232,7 +327,8 @@ export function executarConsultaFinanceira(db, usuarioId, consulta) {
 
   if (consulta.tipo === "total_categoria") {
     const filtrados = doTipo.filter(item =>
-      normalizarCategoriaPorPalavraChave(item.categoria, consulta.movimento) === consulta.categoria
+      categoriaCanonicaLancamento(item, consulta.movimento) ===
+        consulta.categoria
     )
     return {
       ...consulta,

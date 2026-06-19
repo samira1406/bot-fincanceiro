@@ -112,13 +112,13 @@ describe("parseLancamento", () => {
 
     it("parseia com valor inteiro", () => {
       expect(parseLancamento("uber 30")).toEqual({
-        nome: "uber", categoria: "transporte", valor: 30,
+        nome: "uber", categoria: "uber", valor: 30,
       })
     })
 
     it("parseia com ponto decimal", () => {
       expect(parseLancamento("netflix 39.90")).toEqual({
-        nome: "netflix", categoria: "assinaturas", valor: 39.90,
+        nome: "netflix", categoria: "netflix", valor: 39.90,
       })
     })
 
@@ -140,9 +140,9 @@ describe("parseLancamento", () => {
       })
     })
 
-    it("converte ifood para categoria alimentacao", () => {
+    it("mantém Ifood como categoria canônica específica", () => {
       expect(parseLancamento("gastei 80 no ifood")).toEqual({
-        nome: "ifood", categoria: "alimentacao", valor: 80,
+        nome: "ifood", categoria: "ifood", valor: 80,
       })
     })
 
@@ -729,7 +729,7 @@ describe("comandos do beta controlado", () => {
 
 describe("validação dos campos editáveis", () => {
   it("normaliza categoria conhecida", () => {
-    expect(parseCategoriaLancamentoEdicao("Uber", "gasto")).toBe("transporte")
+    expect(parseCategoriaLancamentoEdicao("Uber", "gasto")).toBe("uber")
   })
 
   it("normaliza descrição curta", () => {

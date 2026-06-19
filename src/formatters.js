@@ -584,6 +584,104 @@ export function fmtPendenciaCancelada() {
   return "Tudo bem, cancelei esse lançamento. Nenhum valor foi registrado."
 }
 
+function descricaoAcaoAI(interpretacao) {
+  const transacao = interpretacao.transaction ?? {}
+  if (interpretacao.intent === "registrar_despesa" ||
+      interpretacao.intent === "registrar_receita") {
+    const tipo = interpretacao.intent === "registrar_receita"
+      ? "Receita"
+      : "Despesa"
+    const categoria = transacao.category ?? transacao.description ?? "Geral"
+    return `${tipo} de R$ ${fmtValor(transacao.amount)} em ${fmtCategoriaAmigavel(categoria)}.`
+  }
+
+  const consulta = interpretacao.query ?? {}
+  const periodo = {
+    hoje: "hoje",
+    ontem: "ontem",
+    ultimos_7_dias: "nos últimos 7 dias",
+    esta_semana: "nesta semana",
+    semana_passada: "na semana passada",
+    este_mes: "neste mês",
+    mes_passado: "no mês passado",
+  }[consulta.period] ?? "neste mês"
+  const categoria = consulta.category
+    ? ` em ${fmtCategoriaAmigavel(consulta.category)}`
+    : ""
+
+  const descricoes = {
+    consultar_gastos: `Consultar gastos${categoria} ${periodo}.`,
+    consultar_receitas: `Consultar receitas${categoria} ${periodo}.`,
+    consultar_saldo: `Consultar seu saldo ${periodo}.`,
+    fechamento: "Gerar o fechamento financeiro do mês.",
+    gerar_planilha: "Gerar sua planilha financeira.",
+    corrigir_lancamento: "Abrir o fluxo seguro para corrigir um lançamento.",
+    excluir_lancamento: "Abrir o fluxo seguro para excluir um lançamento.",
+    ajuda: "Abrir a ajuda do bot.",
+  }
+  return descricoes[interpretacao.intent] ?? "Continuar com essa interpretação."
+}
+
+export function fmtAIConfirmacao(interpretacao) {
+  return `Entendi que você quer:
+
+${descricaoAcaoAI(interpretacao)}
+
+Confirmar?
+1 - Sim
+2 - Não`
+}
+
+export function fmtAIColetarValor(interpretacao) {
+  const categoria = interpretacao.transaction?.category ??
+    interpretacao.transaction?.description ??
+    "essa categoria"
+  return `Qual foi o valor em ${fmtCategoriaAmigavel(categoria)}?
+
+Envie apenas o valor. Exemplo:
+35
+
+Ou mande cancelar.`
+}
+
+export function fmtAIColetarCategoria(interpretacao) {
+  const tipo = interpretacao.intent === "registrar_receita" ? "entrada" : "gasto"
+  return `Entendi o valor R$ ${fmtValor(interpretacao.transaction?.amount)} como ${tipo}.
+
+Qual é a categoria ou descrição?
+
+Ou mande cancelar.`
+}
+
+export function fmtAIEsclarecimento(interpretacao) {
+  const pergunta = interpretacao.clarification?.question ??
+    "Não consegui entender com segurança. Pode reformular?"
+  const opcoes = interpretacao.clarification?.options ?? []
+  const linhas = opcoes.map((opcao, indice) => `${indice + 1} - ${opcao}`)
+  return [pergunta, ...linhas].join("\n")
+}
+
+export function fmtAIReformular() {
+  return `Não consegui entender com segurança. Tente enviar assim:
+"mercado 35"
+"recebi 1250 freelance"
+"quanto gastei com mercado?"`
+}
+
+export function fmtAICancelada() {
+  return "Tudo bem, cancelei essa interpretação. Nenhum dado foi alterado."
+}
+
+export function fmtAIRespostaConfirmacaoInvalida() {
+  return `Você tem uma confirmação pendente.
+
+Responda:
+1 - Confirmar
+2 - Cancelar
+
+Ou mande cancelar para descartar e enviar outra mensagem.`
+}
+
 /**
  * Formata a confirmacao de despesa usando apenas os dados do lancamento atual.
  * @param {{ valor:number, categoria:string }} lancamento
@@ -628,6 +726,11 @@ const categoriasAmigaveis = {
   receita:     "Receita",
   entrada:     "Entrada",
   internet:    "Internet",
+  ifood:       "Ifood",
+  uber:        "Uber",
+  petshop:     "Petshop",
+  netflix:     "Netflix",
+  condominio:  "Condomínio",
   aluguel:     "Aluguel",
   poupanca:    "Poupança",
   moradia:     "Moradia",

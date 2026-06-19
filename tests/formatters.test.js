@@ -15,6 +15,7 @@ import {
   fmtOrientacaoEntrada, fmtOrientacaoGasto, fmtOrientacaoMeta,
   fmtExemplosRapidos, formatarMensagemNaoEntendida,
   fmtValorAmbiguo,
+  fmtAIRespostaConfirmacaoInvalida,
   fmtConfirmacaoDespesa, fmtConfirmacaoReceita,
   fmtConfirmacaoExclusaoLancamento, fmtDataLancamentoEdicao,
   fmtBarraMeta, fmtCategoriaAmigavel, fmtDescricaoLancamento,
@@ -103,6 +104,15 @@ describe("mensagens de ajuda e onboarding", () => {
     expect(texto).toContain("1 - Entrada")
     expect(texto).toContain("2 - Gasto")
     expect(texto).toContain("recebi 1.250,00 freelance")
+  })
+
+  it("explica claramente como resolver confirmação pendente da IA", () => {
+    const texto = fmtAIRespostaConfirmacaoInvalida()
+
+    expect(texto).toContain("confirmação pendente")
+    expect(texto).toContain("1 - Confirmar")
+    expect(texto).toContain("2 - Cancelar")
+    expect(texto).toContain("descartar e enviar outra mensagem")
   })
 
   it("formata mensagem de boas-vindas", () => {
@@ -321,6 +331,11 @@ describe("fmtCategoriaAmigavel", () => {
     ["farmacia", "Farmácia"],
     ["salario", "Salário"],
     ["mercado", "Mercado"],
+    ["ifood", "Ifood"],
+    ["uber", "Uber"],
+    ["petshop", "Petshop"],
+    ["netflix", "Netflix"],
+    ["condominio", "Condomínio"],
     ["transporte", "Transporte"],
     ["comissao", "Comissão"],
     ["comissionamento", "Comissionamento"],

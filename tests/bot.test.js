@@ -66,10 +66,51 @@ const botMock = vi.hoisted(() => {
     return jid ? "****" : ""
   }
 
+  const avaliarAutorizacaoBetaCandidatos = (
+    { candidateJids = [], normalizedNumbers = [] } = {},
+    beta
+  ) => {
+    const jidsCandidatos = [...new Set(
+      candidateJids
+        .map(normalizarJidBeta)
+        .filter(jid => jid && !jid.endsWith("@g.us"))
+    )]
+    const numerosCandidatos = [...new Set(
+      normalizedNumbers.flatMap(gerarVariantesNumeroBrasil)
+    )]
+    const numerosAutorizados = [...new Set(
+      (beta?.numerosAutorizados ?? []).flatMap(gerarVariantesNumeroBrasil)
+    )]
+    const jidsAutorizados = [...new Set(
+      (beta?.jidsAutorizados ?? []).map(normalizarJidBeta).filter(Boolean)
+    )]
+    const numerosCorrespondentes = numerosCandidatos
+      .filter(numero => numerosAutorizados.includes(numero))
+    const jidsCorrespondentes = jidsCandidatos
+      .filter(jid => jidsAutorizados.includes(jid))
+    const numeroAutorizado = numerosCorrespondentes.length > 0
+    const jidAutorizado = jidsCorrespondentes.length > 0
+
+    return {
+      autorizado: !beta?.ativo || numeroAutorizado || jidAutorizado,
+      numeroAutorizado,
+      jidAutorizado,
+      candidateJids: jidsCandidatos,
+      normalizedNumbers: numerosCandidatos,
+      numerosAutorizados,
+      jidsAutorizados,
+      numerosCorrespondentes,
+      jidsCorrespondentes,
+    }
+  }
+
   return {
     handlers: {},
     sendMessage: vi.fn(),
     relayMessage: vi.fn(),
+    loggerInfo: vi.fn(),
+    loggerWarn: vi.fn(),
+    loggerError: vi.fn(),
     config: {
       gruposPermitidos:     [],
       grupoPermitido:       "",
@@ -91,6 +132,7 @@ const botMock = vi.hoisted(() => {
         gruposAutorizados: [],
         exigirParticipanteAutorizado: true,
       },
+      ai:                   { enabled: false },
       painel:               { porta: 0, token: "test" },
       backupMantenerDias:   7,
       reconexao:            { maxTentativas: 1, delayInicial: 1, delayMaximo: 1, fator: 1 },
@@ -100,6 +142,7 @@ const botMock = vi.hoisted(() => {
       logLevel:             "silent",
     },
     gerarVariantesNumeroBrasil,
+    avaliarAutorizacaoBetaCandidatos,
     mascararIdentificadorBeta,
     mascararNumeroBeta,
     normalizarJidBeta,
@@ -108,6 +151,10 @@ const botMock = vi.hoisted(() => {
 })
 
 vi.mock("../src/config.js", () => ({
+  avaliarAutorizacaoBetaCandidatos: (
+    candidatos,
+    beta = botMock.config.beta
+  ) => botMock.avaliarAutorizacaoBetaCandidatos(candidatos, beta),
   config: botMock.config,
   gerarVariantesNumeroBrasil: botMock.gerarVariantesNumeroBrasil,
   grupoAutorizadoBeta: (groupJid, beta = botMock.config.beta) => {
@@ -124,24 +171,22 @@ vi.mock("../src/config.js", () => ({
   normalizarJidBeta: botMock.normalizarJidBeta,
   normalizarNumeroWhatsApp: botMock.normalizarNumeroWhatsApp,
   usuarioAutorizadoBeta: (usuarioId, beta = botMock.config.beta) => {
-    if (!beta?.ativo) return true
-
-    const variantesUsuario = botMock.gerarVariantesNumeroBrasil(usuarioId)
     const jidUsuario = botMock.normalizarJidBeta(usuarioId)
-    const autorizados = new Set(
-      (beta.numerosAutorizados ?? []).flatMap(botMock.gerarVariantesNumeroBrasil)
-    )
-    const jidsAutorizados = new Set(
-      (beta.jidsAutorizados ?? []).map(botMock.normalizarJidBeta).filter(Boolean)
-    )
-
-    return variantesUsuario.some(variante => autorizados.has(variante)) ||
-      (jidUsuario && jidsAutorizados.has(jidUsuario))
+    return botMock.avaliarAutorizacaoBetaCandidatos({
+      candidateJids: jidUsuario ? [jidUsuario] : [],
+      normalizedNumbers: jidUsuario.endsWith("@lid")
+        ? []
+        : botMock.gerarVariantesNumeroBrasil(usuarioId),
+    }, beta).autorizado
   },
 }))
 
 vi.mock("../src/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: {
+    info: botMock.loggerInfo,
+    warn: botMock.loggerWarn,
+    error: botMock.loggerError,
+  },
   logMensagem: vi.fn(),
 }))
 
@@ -192,7 +237,14 @@ vi.mock("../src/web/painel.js", () => ({
   iniciarPainel: vi.fn(),
 }))
 
-const { extrairIdentificadorRemetente, extrairUsuarioIdMensagem, iniciarBot, isJidGrupo } = await import("../src/bot.js")
+const {
+  debugLogIncomingIdentifiers,
+  extractMessageIdentifiers,
+  extrairIdentificadorRemetente,
+  extrairUsuarioIdMensagem,
+  iniciarBot,
+  isJidGrupo,
+} = await import("../src/bot.js")
 const {
   atualizarUsuario, criarUsuario, db, getUltimoLancamento, getUsuario,
   inserirLancamento, mesAtual,
@@ -200,6 +252,7 @@ const {
 const { resetPendenciasLancamentoParaTestes } = await import("../src/pendingLancamentos.js")
 const { resetPendenciasEdicaoParaTestes } = await import("../src/pendingEdits.js")
 const { resetPendenciasBetaParaTestes } = await import("../src/pendingBeta.js")
+const { resetPendenciasAIParaTestes } = await import("../src/pendingAI.js")
 const { resetMenusPendentesParaTestes } = await import("../src/interactiveMessages.js")
 
 function prepararUsuario(id) {
@@ -213,6 +266,8 @@ async function entregarMensagem({
   message,
   id = "msg-1",
   participant,
+  sender,
+  pushName,
   fromMe = false,
 }) {
   await botMock.handlers["messages.upsert"]({
@@ -221,6 +276,8 @@ async function entregarMensagem({
       key: { remoteJid, participant, id, fromMe },
       messageTimestamp: Math.floor(Date.now() / 1000),
       message: message ?? { conversation: texto },
+      sender,
+      pushName,
     }],
   })
 }
@@ -229,10 +286,14 @@ beforeEach(async () => {
   resetPendenciasLancamentoParaTestes()
   resetPendenciasEdicaoParaTestes()
   resetPendenciasBetaParaTestes()
+  resetPendenciasAIParaTestes()
   resetMenusPendentesParaTestes()
   botMock.handlers = {}
   botMock.sendMessage.mockClear()
   botMock.relayMessage.mockClear()
+  botMock.loggerInfo.mockClear()
+  botMock.loggerWarn.mockClear()
+  botMock.loggerError.mockClear()
   botMock.config.whatsappInteractiveEnabled = false
   botMock.config.whatsappMenuMode = "text"
   botMock.config.beta = {
@@ -245,6 +306,7 @@ beforeEach(async () => {
     gruposAutorizados: [],
     exigirParticipanteAutorizado: true,
   }
+  botMock.config.ai = { enabled: false }
   db.exec(`
     DELETE FROM feedback_beta;
     DELETE FROM metas_categoria;
@@ -557,6 +619,167 @@ describe("bot - conversas privadas e grupos", () => {
     expect(remetente.identificador).toBe("5515999999999")
   })
 
+  it("extrai candidatos LID, JID e número sem ler o texto da mensagem", () => {
+    const identificadores = extractMessageIdentifiers({
+      key: {
+        remoteJid: "120363000000000000@g.us",
+        participant: "123456789012345@lid",
+      },
+      participant: "5515999999999@s.whatsapp.net",
+      sender: "123456789012345@lid",
+      pushName: "Pessoa Teste",
+      message: { conversation: "conteúdo financeiro privado" },
+    })
+
+    expect(identificadores).toMatchObject({
+      isGroup: true,
+      pushName: "Pessoa Teste",
+      remoteJid: "120363000000000000@g.us",
+      participant: "123456789012345@lid",
+      sender: "123456789012345@lid",
+      messageType: "conversation",
+    })
+    expect(identificadores.candidateLids).toContain("123456789012345@lid")
+    expect(identificadores.candidateWhatsAppJids)
+      .toContain("5515999999999@s.whatsapp.net")
+    expect(identificadores.normalizedNumbers).toContain("5515999999999")
+    expect(JSON.stringify(identificadores)).not.toContain("conteúdo financeiro privado")
+  })
+
+  it("debug cru pré-autorização mostra LID privado e mantém beta silencioso", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      debug: true,
+      debugMostrarRaw: true,
+      numerosAutorizados: ["5515999999999"],
+      jidsAutorizados: [],
+      gruposAutorizados: [],
+      exigirParticipanteAutorizado: true,
+    }
+    botMock.config.ai = {
+      enabled: true,
+      apiKey: "sk-chave-que-nao-pode-aparecer",
+    }
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+
+    await entregarMensagem({
+      remoteJid: "123456789012345@lid",
+      texto: "feedback dado que não pode ser salvo",
+      pushName: "Pessoa Não Autorizada",
+      id: "msg-debug-lid-privado",
+    })
+
+    const saida = consoleSpy.mock.calls.flat().join("\n")
+    consoleSpy.mockRestore()
+
+    expect(saida).toContain("[DEBUG_BETA_RAW_IDENTIFIERS]")
+    expect(saida).toContain('"key.remoteJid": "123456789012345@lid"')
+    expect(saida).toContain('"allowedNumbersMatched": false')
+    expect(saida).toContain('"allowedJidsMatched": false')
+    expect(saida).toContain('"authorized": false')
+    expect(saida).toContain('"action": "ignored_beta_silent"')
+    expect(saida).toContain("LID_CANDIDATE=123456789012345@lid")
+    expect(saida).not.toContain("dado que não pode ser salvo")
+    expect(saida).not.toContain("sk-chave-que-nao-pode-aparecer")
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(botMock.relayMessage).not.toHaveBeenCalled()
+    expect(getUsuario("123456789012345@lid")).toBeNull()
+    expect(getUltimoLancamento("123456789012345@lid")).toBeNull()
+    expect(db.prepare("SELECT COUNT(*) AS total FROM feedback_beta").get().total)
+      .toBe(0)
+
+    const logPersistente = JSON.stringify(botMock.loggerInfo.mock.calls)
+    expect(logPersistente).not.toContain("123456789012345@lid")
+  })
+
+  it("debug cru pré-autorização mostra LID de participante do grupo", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      debug: true,
+      debugMostrarRaw: true,
+      numerosAutorizados: [],
+      jidsAutorizados: [],
+      gruposAutorizados: ["120363000000000000@g.us"],
+      exigirParticipanteAutorizado: true,
+    }
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+
+    await entregarMensagem({
+      remoteJid: "120363000000000000@g.us",
+      participant: "987654321098765@lid",
+      texto: "teste",
+      id: "msg-debug-lid-grupo",
+    })
+
+    const saida = consoleSpy.mock.calls.flat().join("\n")
+    consoleSpy.mockRestore()
+
+    expect(saida).toContain('"key.participant": "987654321098765@lid"')
+    expect(saida).toContain('"isGroup": true')
+    expect(saida).toContain('"action": "ignored_unauthorized_participant"')
+    expect(saida).toContain("LID_CANDIDATE=987654321098765@lid")
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("987654321098765@lid")).toBeNull()
+  })
+
+  it("não imprime identificadores crus quando BETA_DEBUG=false", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      debug: false,
+      debugMostrarRaw: true,
+      numerosAutorizados: [],
+      jidsAutorizados: [],
+      gruposAutorizados: [],
+      exigirParticipanteAutorizado: true,
+    }
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+
+    await entregarMensagem({
+      remoteJid: "111122223333444@lid",
+      texto: "teste",
+      id: "msg-sem-debug-raw",
+    })
+
+    const saida = consoleSpy.mock.calls.flat().join("\n")
+    consoleSpy.mockRestore()
+
+    expect(saida).not.toContain("[DEBUG_BETA_RAW_IDENTIFIERS]")
+    expect(saida).not.toContain("111122223333444@lid")
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("111122223333444@lid")).toBeNull()
+  })
+
+  it("não imprime identificadores crus quando apenas BETA_DEBUG está ativo", async () => {
+    botMock.config.beta = {
+      ativo: true,
+      responderBloqueado: false,
+      debug: true,
+      debugMostrarRaw: false,
+      numerosAutorizados: [],
+      jidsAutorizados: [],
+      gruposAutorizados: [],
+      exigirParticipanteAutorizado: true,
+    }
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+
+    await entregarMensagem({
+      remoteJid: "555566667777888@lid",
+      texto: "teste",
+      id: "msg-debug-mascarado",
+    })
+
+    const saida = consoleSpy.mock.calls.flat().join("\n")
+    consoleSpy.mockRestore()
+
+    expect(saida).not.toContain("[DEBUG_BETA_RAW_IDENTIFIERS]")
+    expect(saida).not.toContain("555566667777888@lid")
+    expect(botMock.sendMessage).not.toHaveBeenCalled()
+    expect(getUsuario("555566667777888@lid")).toBeNull()
+  })
+
   it("mensagem privada com número autorizado funciona", async () => {
     botMock.config.beta = { ativo: true, responderBloqueado: false, numerosAutorizados: ["5515999999999"] }
     prepararUsuario("5515999999999")
@@ -677,6 +900,8 @@ describe("bot - conversas privadas e grupos", () => {
 
   it.each([
     "feedback teste",
+    "reportar erro fechamento demorou",
+    "avaliar beta",
     "começar teste",
     "criar dados de teste",
     "limpar meus dados",

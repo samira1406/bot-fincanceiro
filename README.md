@@ -82,6 +82,18 @@ pm2 save && pm2 startup
 | `BETA_ALLOWED_JIDS` | — | Fallback opcional para JIDs como `@lid`, separados por vírgula |
 | `BETA_ALLOWED_GROUPS` | — | Grupos autorizados, separados por vírgula |
 | `BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT` | true | Em grupo autorizado, exige participante autorizado |
+| `AI_INTERPRETER_ENABLED` | false | Ativa a camada opcional de interpretação estruturada |
+| `AI_PROVIDER` | openai | Provider selecionado: `openai` ou `gemini` |
+| `AI_MODEL` | — | Modelo OpenAI; também é fallback opcional do modelo Gemini |
+| `AI_API_KEY` | — | Chave OpenAI local; nunca deve ser versionada ou logada |
+| `GEMINI_API_KEY` | — | Chave Gemini local; nunca deve ser versionada ou logada |
+| `GEMINI_MODEL` | gemini-2.5-flash | Modelo usado quando `AI_PROVIDER=gemini` |
+| `GEMINI_MAX_OUTPUT_TOKENS` | 1200 | Limite de saída do JSON Gemini; reduz risco de resposta cortada |
+| `AI_MIN_CONFIDENCE` | 0.85 | Confiança mínima para execução pelo sistema |
+| `AI_CONFIRMATION_CONFIDENCE` | 0.60 | Confiança mínima para pedir confirmação |
+| `AI_TIMEOUT_MS` | 8000 | Tempo máximo da interpretação |
+| `AI_LOG_ENABLED` | false | Registra somente metadados seguros da interpretação |
+| `AI_LOG_RAW` | false | Inclui a mensagem atual no log de IA; não recomendado |
 | `PORT` | 3000 | Alias de deploy para a porta do painel |
 | `PAINEL_PORTA` | 3000 | Porta do painel web |
 | `DASHBOARD_TOKEN` | — | Alias de deploy para token do painel |
@@ -133,7 +145,13 @@ Use números com DDI e DDD. Exemplo: `5515999999999`.
 
 Os números podem ser informados apenas com dígitos. O bot normaliza espaços, símbolos, sufixos do WhatsApp e variações brasileiras com ou sem nono dígito antes de comparar.
 
-Se o WhatsApp/Baileys entregar um identificador `@lid` sem telefone claro, use `BETA_DEBUG=true` para ver o identificador mascarado nos logs locais. Se for realmente necessário liberar por JID, preencha `BETA_ALLOWED_JIDS` no `.env` local com o valor correspondente, sem commitar esse arquivo:
+Se o WhatsApp/Baileys entregar um identificador `@lid` sem telefone claro,
+o modo de diagnóstico pode mostrar os candidatos antes do bloqueio do beta.
+O log normal continua sempre mascarado. Identificadores crus aparecem somente
+no terminal quando `BETA_DEBUG=true` e `BETA_DEBUG_SHOW_RAW=true`.
+
+Depois de identificar o contato, preencha `BETA_ALLOWED_JIDS` no `.env` local
+com o valor correspondente, sem commitar esse arquivo:
 
 ```env
 BETA_ALLOWED_JIDS=contato-ficticio@lid
@@ -164,7 +182,248 @@ Exemplo de log mascarado:
 [BETA_DEBUG] privado=false grupo=true fromMe=false group=12036****0000@g.us participant=1234****7890@lid autorizado=true acao=processado
 ```
 
+Para capturar temporariamente um `@lid` cru:
+
+```env
+BETA_MODE=true
+BETA_BLOCKED_REPLY=false
+BETA_DEBUG=true
+BETA_DEBUG_SHOW_RAW=true
+```
+
+Reinicie o processo local do bot e peça para o contato enviar uma mensagem.
+O bot continuará sem responder e sem criar cadastro. O terminal mostrará um
+bloco efêmero, sem o texto da mensagem:
+
+```text
+[DEBUG_BETA_RAW_IDENTIFIERS]
+{
+  "key.remoteJid": "123456789012345@lid",
+  "candidateLids": ["123456789012345@lid"],
+  "allowedJidsMatched": false,
+  "authorized": false,
+  "action": "ignored_beta_silent"
+}
+LID_CANDIDATE=123456789012345@lid
+```
+
+Copie a linha `LID_CANDIDATE` para `BETA_ALLOWED_JIDS`. Ao terminar,
+restaure `BETA_DEBUG=false` e `BETA_DEBUG_SHOW_RAW=false` e reinicie o bot.
+O bloco cru usa apenas o terminal e não passa pelo logger persistente.
+
 Nunca versione o `.env`.
+
+---
+
+## IA Interpretadora Segura - v0.5.2-beta-normalizacao-canonica
+
+Esta fase adiciona uma camada opcional para interpretar frases financeiras com
+erros de digitação ou linguagem mais natural. A IA não conversa livremente,
+não envia respostas próprias e não executa ações.
+
+Ela devolve apenas JSON estruturado. O código local valida intent, confiança,
+valor, categoria, período e compatibilidade dos campos. Somente depois dessa
+validação os handlers já existentes podem registrar, consultar ou abrir um
+fluxo seguro.
+
+A ordem preservada é:
+
+1. autorização do beta;
+2. cancelamentos;
+3. confirmações pendentes;
+4. reset, edição, exclusão, demonstração e comandos beta;
+5. lançamento financeiro pendente;
+6. onboarding;
+7. comandos, consultas e parser local;
+8. classificação de fallback local;
+9. interpretador de IA, se habilitado;
+10. fallback final.
+
+Assim, usuários não autorizados continuam silenciosos e nunca provocam uma
+chamada ao provider.
+
+### Configuração
+
+O padrão seguro é:
+
+```env
+AI_INTERPRETER_ENABLED=false
+AI_PROVIDER=openai
+AI_MODEL=
+AI_API_KEY=
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MAX_OUTPUT_TOKENS=1200
+AI_MIN_CONFIDENCE=0.85
+AI_CONFIRMATION_CONFIDENCE=0.60
+AI_TIMEOUT_MS=8000
+AI_LOG_ENABLED=false
+AI_LOG_RAW=false
+```
+
+OpenAI continua disponível. Para usá-la, configure localmente:
+
+```env
+AI_INTERPRETER_ENABLED=true
+AI_PROVIDER=openai
+AI_MODEL=SEU_MODELO_OPENAI
+AI_API_KEY=SUA_CHAVE_OPENAI
+```
+
+Para usar Gemini:
+
+```env
+AI_INTERPRETER_ENABLED=true
+AI_PROVIDER=gemini
+GEMINI_API_KEY=SUA_CHAVE_GEMINI
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MAX_OUTPUT_TOKENS=1200
+AI_LOG_ENABLED=true
+AI_LOG_RAW=false
+```
+
+A chave Gemini pode ser criada no
+[Google AI Studio](https://aistudio.google.com/app/apikey). Mantenha-a somente
+no `.env` local. Quando `GEMINI_MODEL` está vazio, o bot tenta `AI_MODEL`; se
+ambos estiverem vazios, usa `gemini-2.5-flash`.
+
+Referência técnica:
+[Gemini Structured Outputs](https://ai.google.dev/gemini-api/docs/structured-output).
+
+Não existe fallback automático entre providers: `AI_PROVIDER` escolhe um
+adaptador por vez. Se a chave estiver ausente, houver timeout, limite de cota,
+provider indisponível ou JSON inválido, o bot não quebra e usa o fallback local.
+OpenAI usa Responses API com Structured Outputs. Gemini usa `generateContent`
+com `generationConfig.responseMimeType="application/json"`; o schema permanece
+obrigatório no prompt e na validação local do bot.
+
+Na resposta do Gemini, o bot concatena todos os `candidates[0].content.parts[].text`,
+remove BOM e cercas Markdown externas e procura o primeiro objeto JSON completo
+por balanceamento de chaves, respeitando strings e escapes. Texto explicativo
+antes ou depois é ignorado. Arrays, objetos incompletos e texto sem JSON são
+rejeitados e seguem para o fallback local.
+
+Objetos JSON válidos porém parciais recebem somente padrões conservadores:
+`intent="desconhecido"`, `confidence=0`, confirmação obrigatória e campos
+ausentes como `null`. O bot não inventa valor e não executa esse resultado.
+Intenção inválida, valor negativo ou schema com campos desconhecidos continuam
+rejeitados.
+
+### Normalização pós-IA
+
+Antes da validação final, aliases seguros são convertidos para o contrato
+canônico. Exemplos: `consulta_despesas` vira `consultar_gastos`, `despesas`
+vira `gastos`, `esse_mes` vira `este_mes` e `gasto` vira `despesa`.
+Aliases desconhecidos continuam sendo rejeitados.
+
+Categorias passam por uma regra central usada pelo parser e pela IA. Ela
+remove diferenças de caixa e acento, reconhece aliases claros e aplica fuzzy
+somente quando existe uma correspondência única. Assim, `mercd` vira
+`mercado`, `ifodi` vira `ifood` e `frila` vira `freelance`. Categorias
+personalizadas sem correspondência, como `curso profissional`, são preservadas
+e não são inventadas. Correspondência fuzzy exige confirmação antes da ação.
+
+Consultas também recebem a categoria normalizada. Registros legados que
+guardaram Ifood como `alimentacao` ou Uber como `transporte` ainda podem ser
+encontrados pela descrição original do lançamento.
+
+### Confiança e confirmação
+
+- `confidence >= 0.85`: o sistema pode executar uma ação não ambígua.
+- `confidence >= 0.60` e `< 0.85`: o bot pede confirmação.
+- `confidence < 0.60`: nada é executado e o usuário recebe exemplos seguros.
+- Valores de transação só são aceitos se aparecerem na mensagem original.
+- Termos como `uns`, `aproximadamente`, `por volta`, `acho` e `talvez` forçam
+  confirmação.
+- Valor ou categoria ausente inicia uma pendência isolada por usuário.
+- `1` confirma, `2` ou `cancelar` cancela sem alterar dados.
+
+Exemplos que podem ser interpretados quando a camada estiver ligada:
+
+```text
+gstei 35 no mercd
+gastei uns 47 conto no ifodi ontem
+receebi 1250 de frila
+qnt foi ifod esse mes
+quanto gastei de uber essa semana
+```
+
+Os fluxos locais continuam prioritários:
+
+```text
+mercado 35
+recebi 1250 freelance
+1250
+fechamento
+planilha
+```
+
+### Privacidade e riscos
+
+- Somente a mensagem atual e contexto mínimo opcional são enviados.
+- Histórico, banco, autenticação, `.env` e tokens não são enviados.
+- A resposta bruta do provider não é gravada em log.
+- `AI_LOG_ENABLED=true` registra somente intent, confiança, ação e erro.
+- `AI_LOG_RAW=true` pode registrar a mensagem atual e deve permanecer desligado.
+- As chaves OpenAI e Gemini nunca são adicionadas aos logs, mesmo quando o log
+  bruto está ativo.
+- A interpretação pode errar categoria ou intenção; por isso há validação,
+  limites de confiança e confirmação intermediária.
+
+Quando `AI_LOG_ENABLED=true`, falhas incluem somente diagnóstico técnico
+sanitizado: provider, modelo, status HTTP, código, tipo, mensagem resumida,
+timeout, JSON inválido e erro de Structured Outputs/schema. Para o Gemini,
+também registra tamanho da resposta, início/fim com chave, balanceamento de
+chaves, presença de fence, estágio do parse, `finishReason`, bloqueio de
+segurança e se um objeto parcial foi normalizado. Com
+`AI_LOG_RAW=false`, o conteúdo da mensagem do usuário não aparece.
+Uma prévia sanitizada de no máximo 500 caracteres da resposta do provider
+aparece somente com `AI_LOG_RAW=true`.
+
+### Teste manual
+
+Com IA desligada:
+
+```text
+mercado 35
+recebi 1250 freelance
+fechamento
+planilha
+gstei 35 no mercd
+```
+
+Os quatro primeiros exemplos devem funcionar como antes. O último pode cair no
+fallback local.
+
+Com IA ligada em ambiente controlado:
+
+```text
+gstei 35 no mercd
+gastei uns 47 conto no ifodi ontem
+receebi 1250 de frila
+qnt foi ifod esse mes
+1250
+mercado
+banana azul
+```
+
+Mensagens claras podem ser executadas pelos handlers locais, confiança média
+deve pedir confirmação, `1250` mantém o fluxo ambíguo antigo, `mercado` pede
+valor e texto sem sentido não registra nada. Os resultados esperados incluem
+`Mercado`, `Freelance` e `Ifood`, nunca `Mercd`, `Frila` ou `Ifodi`. A consulta
+`qnt foi ifod esse mes` deve consultar gastos de Ifood no mês atual.
+
+Para validar especificamente o Gemini, confirme no terminal que o log seguro
+mostra:
+
+```text
+provider: gemini
+model: gemini-2.5-flash
+```
+
+Gemini é uma opção para beta e testes controlados. A disponibilidade, os
+modelos e os limites gratuitos podem mudar; consulte a documentação e os
+limites atuais do Google antes de liberar uso amplo.
 
 ---
 

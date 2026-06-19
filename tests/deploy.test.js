@@ -39,6 +39,7 @@ describe("preparacao de deploy 24/7", () => {
     for (const item of [
       "node_modules/",
       "auth/",
+      "auth_antigo/",
       "database/*.db",
       "database/*.db-wal",
       "database/*.db-shm",
@@ -48,6 +49,11 @@ describe("preparacao de deploy 24/7", () => {
       "logs/*.log",
       "coverage/",
       "exports/",
+      "*.db",
+      "*.db-*",
+      "*.log",
+      "*.csv",
+      "*.xlsx",
     ]) {
       expect(gitignore).toContain(item)
     }
@@ -66,6 +72,18 @@ describe("preparacao de deploy 24/7", () => {
     expect(envExample).toContain("BETA_ALLOWED_JIDS=1234567890@lid,0987654321@lid")
     expect(envExample).toContain("BETA_ALLOWED_GROUPS=120363000000000000@g.us")
     expect(envExample).toContain("BETA_GROUP_REQUIRE_AUTHORIZED_PARTICIPANT=true")
+    expect(envExample).toContain("AI_INTERPRETER_ENABLED=false")
+    expect(envExample).toContain("AI_PROVIDER=openai")
+    expect(envExample).toContain("AI_MODEL=")
+    expect(envExample).toContain("AI_API_KEY=")
+    expect(envExample).toContain("GEMINI_API_KEY=")
+    expect(envExample).toContain("GEMINI_MODEL=gemini-2.5-flash")
+    expect(envExample).toContain("GEMINI_MAX_OUTPUT_TOKENS=1200")
+    expect(envExample).toContain("AI_MIN_CONFIDENCE=0.85")
+    expect(envExample).toContain("AI_CONFIRMATION_CONFIDENCE=0.60")
+    expect(envExample).toContain("AI_TIMEOUT_MS=8000")
+    expect(envExample).toContain("AI_LOG_ENABLED=false")
+    expect(envExample).toContain("AI_LOG_RAW=false")
     expect(envExample).toContain("DASHBOARD_TOKEN=troque-este-token")
     expect(envExample).toContain("DATABASE_PATH=./database/financas.db")
   })

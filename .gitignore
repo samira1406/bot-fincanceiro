@@ -1,5 +1,6 @@
 node_modules/
 auth/
+auth_antigo/
 database/*.db
 database/*.db-wal
 database/*.db-shm
@@ -9,3 +10,8 @@ logs/
 logs/*.log
 coverage/
 exports/
+*.db
+*.db-*
+*.log
+*.csv
+*.xlsx

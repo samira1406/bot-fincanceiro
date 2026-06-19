@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import {
+  criarConsultaFinanceiraEstruturada,
   executarConsultaFinanceira,
   formatarRespostaConsulta,
   parseConsultaFinanceira,
@@ -45,6 +46,29 @@ describe("parseConsultaFinanceira", () => {
     ["quanto gastei nos últimos 7 dias?", "ultimos_7_dias"],
   ])("entende o período em %s", (mensagem, periodo) => {
     expect(parseConsultaFinanceira(mensagem, AGORA).periodo.tipo).toBe(periodo)
+  })
+
+  it("entende semana passada", () => {
+    expect(parseConsultaFinanceira(
+      "quanto gastei com mercado semana passada",
+      AGORA
+    ).periodo.tipo).toBe("semana_passada")
+  })
+
+  it("cria consulta estruturada para uso do interpretador", () => {
+    const consulta = criarConsultaFinanceiraEstruturada({
+      intent: "consultar_gastos",
+      metric: "gastos",
+      category: "Ifood",
+      period: "este_mes",
+    }, AGORA)
+
+    expect(consulta).toMatchObject({
+      tipo: "total_categoria",
+      movimento: "gasto",
+      categoria: "ifood",
+      periodo: { tipo: "mes_atual" },
+    })
   })
 
   it("usa o mês atual quando não há período explícito", () => {
@@ -104,9 +128,24 @@ describe("executarConsultaFinanceira", () => {
 
   it("agrupa categorias antigas e canônicas no ranking", () => {
     const { db } = bancoCom([
-      { tipo: "gasto", categoria: "ifood", valor: 80 },
-      { tipo: "gasto", categoria: "alimentacao", valor: 20 },
-      { tipo: "gasto", categoria: "uber", valor: 50 },
+      {
+        tipo: "gasto",
+        nome: "ifood",
+        categoria: "alimentacao",
+        valor: 80,
+      },
+      {
+        tipo: "gasto",
+        nome: "restaurante",
+        categoria: "alimentacao",
+        valor: 20,
+      },
+      {
+        tipo: "gasto",
+        nome: "uber",
+        categoria: "transporte",
+        valor: 50,
+      },
     ])
     const consulta = {
       tipo: "ranking_categorias",
@@ -116,9 +155,32 @@ describe("executarConsultaFinanceira", () => {
 
     expect(executarConsultaFinanceira(db, "usuario-1", consulta).ranking)
       .toEqual([
-        { categoria: "alimentacao", total: 100 },
-        { categoria: "transporte", total: 50 },
+        { categoria: "ifood", total: 80 },
+        { categoria: "uber", total: 50 },
+        { categoria: "alimentacao", total: 20 },
       ])
+  })
+
+  it("consulta Ifood em dado legado salvo como alimentação", () => {
+    const { db } = bancoCom([{
+      tipo: "gasto",
+      nome: "ifood",
+      categoria: "alimentacao",
+      valor: 47,
+    }])
+    const consulta = criarConsultaFinanceiraEstruturada({
+      intent: "consultar_gastos",
+      metric: "gastos",
+      category: "ifod",
+      period: "este_mes",
+    }, AGORA)
+
+    expect(executarConsultaFinanceira(db, "usuario-1", consulta))
+      .toMatchObject({
+        status: "ok",
+        categoria: "ifood",
+        total: 47,
+      })
   })
 
   it("retorna estado amigável para categoria sem dados", () => {
